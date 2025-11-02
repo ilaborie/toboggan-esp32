@@ -1,10 +1,12 @@
-fn main() {
-    // It is necessary to call this function once. Otherwise, some patches to the runtime
-    // implemented by esp-idf-sys might not link properly. See https://github.com/esp-rs/esp-idf-template/issues/71
-    esp_idf_svc::sys::link_patches();
+use anyhow::Context;
+use esp_idf_svc::{eventloop::EspSystemEventLoop, hal::prelude::Peripherals};
 
-    // Bind the log crate to the ESP Logging facilities
+fn main() -> anyhow::Result<()> {
+    esp_idf_svc::sys::link_patches();
     esp_idf_svc::log::EspLogger::initialize_default();
 
-    log::info!("Hello, world!");
+    let peripherals = Peripherals::take().context("Failed to take peripherals")?;
+    let sysloop = EspSystemEventLoop::take()?;
+
+    toboggan_esp32::run(peripherals, sysloop)
 }

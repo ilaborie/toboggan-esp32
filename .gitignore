@@ -1,4 +1,4 @@
 /.vscode
 /.embuild
 /target
-/Cargo.lock
+components_esp32s3.lock
