@@ -1,4 +1,5 @@
-use std::{sync::mpsc, time::Duration};
+use std::sync::mpsc;
+use std::time::Duration;
 
 use anyhow::{bail, Context};
 use esp_idf_svc::io::EspIOError;
@@ -11,7 +12,18 @@ use heapless::spsc::{Producer, Queue};
 use log::{debug, error, info, warn};
 use serde::Deserialize;
 
-use crate::{AppStateDiff, StateMode};
+use crate::config::websocket::{CONNECTION_TIMEOUT, MESSAGE_QUEUE_SIZE, POLL_INTERVAL};
+use crate::{error_diff, AppStateDiff, StateMode};
+
+/// Client ID assigned by the server during registration
+type ClientId = String;
+
+/// Notification enum for parsing server responses
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type")]
+enum Notification {
+    Registered { client_id: ClientId },
+}
 
 /// The PEM-encoded ISRG Root X1 certificate at the end of the cert chain
 /// for the websocket server at echo.websocket.org.
@@ -51,9 +63,18 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
 #[derive(Debug, Clone)]
 enum WsMessage {
     Connected,
-    State { current: usize, mode: StateMode },
+    Registered {
+        client_id: ClientId,
+    },
+    State {
+        current: usize,
+        current_step: usize,
+        mode: StateMode,
+    },
     Blink,
-    Error { message: String },
+    Error {
+        message: String,
+    },
     Closed,
 }
 
@@ -70,9 +91,21 @@ enum Message {
 #[serde(tag = "state")]
 enum InnerState {
     Init,
-    Paused { current: Option<usize> },
-    Running { current: usize },
-    Done { current: usize },
+    Paused {
+        current: Option<usize>,
+        #[serde(default)]
+        current_step: Option<usize>,
+    },
+    Running {
+        current: usize,
+        #[serde(default)]
+        current_step: usize,
+    },
+    Done {
+        current: usize,
+        #[serde(default)]
+        current_step: usize,
+    },
 }
 
 /// Connect to WebSocket server for real-time presentation control
@@ -85,26 +118,27 @@ pub fn connect_to_ws(host: &str, port: u16, tx: &mpsc::Sender<AppStateDiff>) -> 
 
     let config = EspWebSocketClientConfig {
         server_cert: Some(X509::pem_until_nul(SERVER_ROOT_CERT)),
+        reconnect_timeout_ms: CONNECTION_TIMEOUT,
+        network_timeout_ms: CONNECTION_TIMEOUT,
         ..Default::default()
     };
-    let timeout = Duration::from_secs(10);
 
     // Use heapless queue for lock-free communication
     // Leak the queue to make it effectively static for the closure
-    let ws_queue = Box::leak(Box::new(Queue::<WsMessage, 16>::new()));
+    let ws_queue = Box::leak(Box::new(Queue::<WsMessage, MESSAGE_QUEUE_SIZE>::new()));
     let (mut ws_producer, mut ws_consumer) = ws_queue.split();
 
     info!("🦋 WS connecting...");
 
-    let mut client = EspWebSocketClient::new(&uri, &config, timeout, move |event| {
+    let mut client = EspWebSocketClient::new(&uri, &config, CONNECTION_TIMEOUT, move |event| {
         handle_event(&mut ws_producer, event);
     })
     .context("creating WS client")?;
 
     // Wait for connection - poll the queue
     let mut connected = false;
-    for _ in 0..100 {
-        // 10 second timeout (100 * 100ms)
+    let poll_count = CONNECTION_TIMEOUT.as_millis() / POLL_INTERVAL.as_millis();
+    for _ in 0..poll_count {
         if let Some(first_event) = ws_consumer.dequeue() {
             match first_event {
                 WsMessage::Connected => {
@@ -114,7 +148,7 @@ pub fn connect_to_ws(host: &str, port: u16, tx: &mpsc::Sender<AppStateDiff>) -> 
                 other => bail!("Expected connected event, got {other:?}"),
             }
         }
-        std::thread::sleep(Duration::from_millis(100));
+        std::thread::sleep(POLL_INTERVAL);
     }
 
     if !connected {
@@ -124,9 +158,12 @@ pub fn connect_to_ws(host: &str, port: u16, tx: &mpsc::Sender<AppStateDiff>) -> 
     info!("🦋 WS connnected");
 
     // Register client
-    let message = r#"{"command":"Register","client":"801eb979-13c6-48c7-8ce0-78e1a3200bc6","renderer":"Html"}"#;
+    let message = r#"{"command":"Register","name":"ESP32"}"#;
     info!("Websocket send, text: {message}");
     client.send(FrameType::Text(false), message.as_bytes())?;
+
+    // Track client_id for clean unregistration
+    let mut client_id: Option<ClientId> = None;
 
     // Main message processing loop
     loop {
@@ -134,31 +171,46 @@ pub fn connect_to_ws(host: &str, port: u16, tx: &mpsc::Sender<AppStateDiff>) -> 
             info!("🦋 WS incomming {msg:?}");
             match msg {
                 WsMessage::Connected => bail!("🦋 WS unexpected connected message"),
-                WsMessage::State { current, mode } => {
+                WsMessage::Registered { client_id: id } => {
+                    info!("🦋 WS - registered with client_id: {id}");
+                    client_id = Some(id);
+                }
+                WsMessage::State {
+                    current,
+                    current_step,
+                    mode,
+                } => {
                     // Send slide update diff instead of full state
-                    let diff = AppStateDiff::UpdateSlide { current, mode };
+                    let diff = AppStateDiff::UpdateSlide {
+                        current,
+                        current_step,
+                        mode,
+                    };
                     if let Err(error) = tx.send(diff) {
                         error!("Failed to send slide update diff: {error}, stopping WebSocket");
+                        send_unregister(&mut client, client_id.as_ref());
                         break;
                     }
                 }
                 WsMessage::Blink => {
-                    // Send blink effect diff
+                    // Send blink diff
                     let diff = AppStateDiff::Blink;
                     if let Err(error) = tx.send(diff) {
                         error!("Failed to send blink diff: {error}, stopping WebSocket");
+                        send_unregister(&mut client, client_id.as_ref());
                         break;
                     }
                 }
                 WsMessage::Closed => {
                     info!("🦋 WS - closing");
+                    send_unregister(&mut client, client_id.as_ref());
                     break;
                 }
                 WsMessage::Error { message } => {
                     info!("🦋 WS - error {message}");
-                    let diff = AppStateDiff::Error { message };
-                    if let Err(error) = tx.send(diff) {
+                    if let Err(error) = tx.send(error_diff!("{message}")) {
                         error!("Failed to send error diff: {error}, stopping WebSocket");
+                        send_unregister(&mut client, client_id.as_ref());
                         break;
                     }
                 }
@@ -172,10 +224,20 @@ pub fn connect_to_ws(host: &str, port: u16, tx: &mpsc::Sender<AppStateDiff>) -> 
     Ok(())
 }
 
-fn handle_event(
-    producer: &mut Producer<WsMessage, 16>,
-    event: &Result<WebSocketEvent, EspIOError>,
-) {
+/// Send Unregister command to cleanly disconnect from server
+fn send_unregister(client: &mut EspWebSocketClient, client_id: Option<&ClientId>) {
+    let Some(id) = client_id else {
+        debug!("No client_id to unregister");
+        return;
+    };
+    let msg = format!(r#"{{"command":"Unregister","client":"{id}"}}"#);
+    info!("🦋 WS - sending unregister: {msg}");
+    if let Err(e) = client.send(FrameType::Text(false), msg.as_bytes()) {
+        warn!("Failed to send Unregister: {e}");
+    }
+}
+
+fn handle_event(producer: &mut Producer<WsMessage>, event: &Result<WebSocketEvent, EspIOError>) {
     let event = match event {
         Ok(event) => event,
         Err(err) => {
@@ -208,32 +270,56 @@ fn handle_event(
 
         WebSocketEventType::Text(txt) => {
             info!("📥 WS - text: {txt}");
-            let Ok(msg) = serde_json::from_str::<Message>(txt) else {
+
+            // Try parsing as Registered notification first
+            if let Ok(Notification::Registered { client_id }) =
+                serde_json::from_str::<Notification>(txt)
+            {
+                info!("📥 WS - registered with client_id: {client_id}");
+                WsMessage::Registered { client_id }
+            } else if let Ok(msg) = serde_json::from_str::<Message>(txt) {
+                // Then try parsing as Message
+                match msg {
+                    Message::Blink => {
+                        info!("📥 WS - ⚡️ blink event received");
+                        WsMessage::Blink
+                    }
+                    Message::State { state } | Message::TalkChange { state } => {
+                        let Some((current, current_step, mode)) = (match state {
+                            InnerState::Init => {
+                                warn!("📥 WS - Initialized");
+                                None
+                            }
+                            InnerState::Paused {
+                                current,
+                                current_step,
+                            } => Some((
+                                current.unwrap_or_default(),
+                                current_step.unwrap_or(0),
+                                StateMode::Paused,
+                            )),
+                            InnerState::Running {
+                                current,
+                                current_step,
+                            } => Some((current, current_step, StateMode::Running)),
+                            InnerState::Done {
+                                current,
+                                current_step,
+                            } => Some((current, current_step, StateMode::Done)),
+                        }) else {
+                            return;
+                        };
+                        WsMessage::State {
+                            current,
+                            current_step,
+                            mode,
+                        }
+                    }
+                    Message::Error { message } => WsMessage::Error { message },
+                }
+            } else {
                 debug!("📥 WS - skip the message");
                 return;
-            };
-
-            match msg {
-                Message::Blink => {
-                    info!("📥 WS - ⚡️ blink event received");
-                    WsMessage::Blink
-                }
-                Message::State { state } | Message::TalkChange { state } => {
-                    let (current, mode) = match state {
-                        InnerState::Init => {
-                            warn!("📥 WS - Initialized");
-                            return;
-                        }
-                        InnerState::Paused { current } => {
-                            (current.unwrap_or_default(), StateMode::Paused)
-                        }
-                        InnerState::Running { current } => (current, StateMode::Running),
-                        InnerState::Done { current } => (current, StateMode::Done),
-                    };
-                    WsMessage::State { current, mode }
-                }
-
-                Message::Error { message } => WsMessage::Error { message },
             }
         }
         WebSocketEventType::Binary(items) => {

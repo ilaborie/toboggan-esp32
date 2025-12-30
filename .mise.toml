@@ -13,9 +13,28 @@ TOBOGGAN_PORT = 8080
 "cargo:espup" = "latest"
 "cargo:esp-generate" = "latest"
 
+[tasks.check]
+description = "Check the code compiles"
+run = "cargo check"
+
+[tasks.lint]
+description = "Run clippy linter"
+run = "cargo clippy"
+
+[tasks.fix]
+description = "Fix formatting and lint issues"
+run = """
+cargo +nightly fmt
+cargo clippy --fix --allow-dirty --allow-staged
+"""
+
+[tasks.fmt]
+description = "Format code with rustfmt"
+run = "cargo +nightly fmt"
+
 [tasks.flash]
 description = "Flash the device"
-run = "espflash flash --monitor target/xtensa-esp32s3-espidf/release/toboggan-esp32"
+run = "espflash flash target/xtensa-esp32s3-espidf/release/toboggan-esp32"
 
 [tasks.ip]
 description = "Return the host IP"

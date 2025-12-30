@@ -1,18 +1,45 @@
+use std::sync::mpsc;
+
 use crate::config::app::{BOOTING_TEXT, ERROR_PREFIX};
 use crate::config::network::{CONNECTING_TEXT_PREFIX, CONNECTING_TEXT_SUFFIX, LOADING_TALK_TEXT};
-use std::sync::mpsc;
+
+/// Helper to send state diffs with consistent error logging
+pub fn send_diff(sender: &mpsc::Sender<AppStateDiff>, diff: AppStateDiff, context: &str) {
+    if let Err(error) = sender.send(diff) {
+        log::error!("Failed to send {context} diff: {error}");
+    }
+}
+
+/// Creates an `AppStateDiff::Error` with format! style arguments
+///
+/// # Examples
+/// ```ignore
+/// error_diff!("WiFi failed: {}", error)
+/// error_diff!("Connection timeout after {timeout:?}")
+/// ```
+#[macro_export]
+macro_rules! error_diff {
+    ($($arg:tt)*) => {
+        $crate::AppStateDiff::Error { message: format!($($arg)*) }
+    };
+}
 
 /// Static talk content that doesn't change during presentation
 #[derive(Debug, Clone, PartialEq, Hash)]
 pub struct TalkData {
     pub title: String,
     pub slides: Vec<String>,
+    pub step_counts: Vec<usize>,
 }
 
 impl TalkData {
     #[must_use]
-    pub fn new(title: String, slides: Vec<String>) -> Self {
-        Self { title, slides }
+    pub fn new(title: String, slides: Vec<String>, step_counts: Vec<usize>) -> Self {
+        Self {
+            title,
+            slides,
+            step_counts,
+        }
     }
 
     #[must_use]
@@ -29,6 +56,12 @@ impl TalkData {
     pub fn get_next_slide(&self, current: usize) -> Option<&str> {
         self.slides.get(current + 1).map(String::as_str)
     }
+
+    /// Get step count for a slide (defaults to 0 if not available)
+    #[must_use]
+    pub fn get_step_count(&self, index: usize) -> usize {
+        self.step_counts.get(index).copied().unwrap_or(0)
+    }
 }
 
 /// Differential updates for efficient state management
@@ -36,8 +69,12 @@ impl TalkData {
 pub enum AppStateDiff {
     /// Transition to a completely new state
     Transition(AppState),
-    /// Update slide position and mode (only valid in Play state)
-    UpdateSlide { current: usize, mode: StateMode },
+    /// Update slide position, step, and mode (only valid in Play state)
+    UpdateSlide {
+        current: usize,
+        current_step: usize,
+        mode: StateMode,
+    },
     /// Trigger LED blink effect (transient, doesn't change core state)
     Blink,
     /// Error occurred (can happen from any state)
@@ -47,12 +84,22 @@ pub enum AppStateDiff {
 #[derive(Debug, Clone, PartialEq, Hash)]
 pub enum AppState {
     Booting,
-    Connecting { ssid: String },
-    Connected { ssid: String },
+    Connecting {
+        ssid: String,
+    },
+    Connected {
+        ssid: String,
+    },
     Loading,
     Initialized,
-    Play { current: usize, mode: StateMode },
-    Error { message: String },
+    Play {
+        current: usize,
+        current_step: usize,
+        mode: StateMode,
+    },
+    Error {
+        message: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Hash)]
@@ -75,8 +122,12 @@ impl AppState {
             }
             AppState::Loading => LOADING_TALK_TEXT.into(),
             AppState::Initialized => "Talk loaded and ready".into(),
-            AppState::Play { current, mode } => {
-                format!("Playing slide {current} ({mode:?})")
+            AppState::Play {
+                current,
+                current_step,
+                mode,
+            } => {
+                format!("Slide {current} step {current_step} ({mode:?})")
             }
             AppState::Error { message } => format!("{ERROR_PREFIX}{message}"),
         }
@@ -92,9 +143,17 @@ impl AppState {
     pub fn apply_diff(self, diff: AppStateDiff) -> Self {
         match diff {
             AppStateDiff::Transition(new_state) => new_state,
-            AppStateDiff::UpdateSlide { current, mode } => match self {
+            AppStateDiff::UpdateSlide {
+                current,
+                current_step,
+                mode,
+            } => match self {
                 // Transition from Initialized to Play on first slide update
-                AppState::Initialized | AppState::Play { .. } => AppState::Play { current, mode },
+                AppState::Initialized | AppState::Play { .. } => AppState::Play {
+                    current,
+                    current_step,
+                    mode,
+                },
                 // Ignore slide updates in other states
                 other => other,
             },
@@ -154,8 +213,12 @@ impl StateManager {
     }
 
     /// Convenience method for slide updates
-    pub fn update_slide(&mut self, current: usize, mode: StateMode) {
-        self.send_diff(AppStateDiff::UpdateSlide { current, mode });
+    pub fn update_slide(&mut self, current: usize, current_step: usize, mode: StateMode) {
+        self.send_diff(AppStateDiff::UpdateSlide {
+            current,
+            current_step,
+            mode,
+        });
     }
 
     /// Convenience method for blink effect
@@ -165,8 +228,7 @@ impl StateManager {
 
     /// Convenience method for errors
     pub fn transition_to_error(&mut self, error_message: impl Into<String>) {
-        self.send_diff(AppStateDiff::Error {
-            message: error_message.into(),
-        });
+        let message = error_message.into();
+        self.send_diff(error_diff!("{message}"));
     }
 }

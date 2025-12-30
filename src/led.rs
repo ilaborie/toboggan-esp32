@@ -1,3 +1,5 @@
+use std::time::{Duration, Instant};
+
 use anyhow::Context;
 use esp_idf_svc::hal::gpio::{AnyIOPin, IOPin, Output, PinDriver};
 use log::info;
@@ -94,6 +96,7 @@ pub struct LedController {
     green_pin: PinDriver<'static, AnyIOPin, Output>,
     blue_pin: PinDriver<'static, AnyIOPin, Output>,
     current_pattern: LedPattern,
+    blink_override_end: Option<Instant>,
 }
 
 impl LedController {
@@ -117,6 +120,7 @@ impl LedController {
             green_pin,
             blue_pin,
             current_pattern: LedPattern::Solid(RgbColor::OFF),
+            blink_override_end: None,
         };
 
         controller.turn_off()?;
@@ -166,5 +170,71 @@ impl LedController {
             );
             self.current_pattern = pattern;
         }
+    }
+
+    /// Start a temporary blink override effect
+    pub fn start_blink_override(&mut self, duration: Duration) {
+        info!("⚡ Starting LED blink override for {duration:?}");
+        self.blink_override_end = Some(Instant::now() + duration);
+    }
+
+    /// Check if blink override is active
+    #[must_use]
+    pub fn is_blink_override_active(&self) -> bool {
+        self.blink_override_end
+            .is_some_and(|end| Instant::now() < end)
+    }
+
+    /// Update LEDs based on current pattern and state
+    ///
+    /// # Errors
+    /// Returns error if GPIO pin state changes fail
+    pub fn update(&mut self, state: &AppState) -> anyhow::Result<()> {
+        // Check if blink override expired
+        if let Some(end) = self.blink_override_end {
+            if Instant::now() >= end {
+                info!("⚡ Blink override ended");
+                self.blink_override_end = None;
+            }
+        }
+
+        // If blink override is active, use yellow blinking
+        if self.is_blink_override_active() {
+            let blink_on = Self::calculate_blink_phase(BLINK_INTERVAL_NORMAL);
+            if blink_on {
+                self.set_color(RgbColor::YELLOW)?;
+            } else {
+                self.turn_off()?;
+            }
+            return Ok(());
+        }
+
+        // Update pattern from state
+        let pattern = LedPattern::from_state(state);
+        self.set_pattern(pattern);
+
+        // Apply the pattern
+        match self.current_pattern {
+            LedPattern::Solid(color) => self.set_color(color)?,
+            LedPattern::Blinking(color, interval) => {
+                let blink_on = Self::calculate_blink_phase(interval);
+                if blink_on {
+                    self.set_color(color)?;
+                } else {
+                    self.turn_off()?;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Calculate if we're in the "on" phase of a blink cycle
+    fn calculate_blink_phase(interval_ms: u64) -> bool {
+        let millis = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis();
+        (millis / u128::from(interval_ms)) % 2 == 0
     }
 }

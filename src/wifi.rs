@@ -1,6 +1,7 @@
 use anyhow::{bail, Result};
 use esp_idf_svc::eventloop::EspSystemEventLoop;
-use esp_idf_svc::hal::{modem::Modem, peripheral};
+use esp_idf_svc::hal::modem::Modem;
+use esp_idf_svc::hal::peripheral;
 use esp_idf_svc::wifi::{AuthMethod, BlockingWifi, ClientConfiguration, Configuration, EspWifi};
 use log::info;
 
@@ -65,7 +66,10 @@ pub fn wifi_sync(
         None
     };
 
-    info!("🔧 Configuring WiFi with SSID: '{ssid}', Auth: {:?}, Channel: {:?}", auth_method, channel);
+    info!(
+        "🔧 Configuring WiFi with SSID: '{ssid}', Auth: {:?}, Channel: {:?}",
+        auth_method, channel
+    );
 
     wifi.set_configuration(&Configuration::Client(ClientConfiguration {
         ssid: ssid
@@ -84,8 +88,12 @@ pub fn wifi_sync(
         .map_err(|e| anyhow::anyhow!("Connection to '{}' failed: {} (Check SSID/password, signal strength, or AP availability)", ssid, e))?;
 
     info!("⏳ Waiting for DHCP lease...");
-    wifi.wait_netif_up()
-        .map_err(|e| anyhow::anyhow!("Failed to obtain DHCP lease: {} (Check DHCP server availability)", e))?;
+    wifi.wait_netif_up().map_err(|e| {
+        anyhow::anyhow!(
+            "Failed to obtain DHCP lease: {} (Check DHCP server availability)",
+            e
+        )
+    })?;
 
     let ip_info = wifi.wifi().sta_netif().get_ip_info()?;
     info!("✅ WiFi connected successfully!");
