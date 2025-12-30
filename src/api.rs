@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use anyhow::{bail, Context};
 use embedded_svc::http::client::Client;
 use esp_idf_svc::http::client::{Configuration, EspHttpConnection};
@@ -28,18 +30,30 @@ pub struct Api {
 #[allow(dead_code)]
 impl Api {
     pub(crate) fn new(base_url: String) -> anyhow::Result<Self> {
-        let configuration = Configuration::default();
-        let conn = EspHttpConnection::new(&configuration).context("creating the HTTP conection")?;
+        let configuration = Configuration {
+            timeout: Some(Duration::from_secs(60)),
+            buffer_size: Some(2048),    // Reduced buffer size
+            buffer_size_tx: Some(1024), // Reduced TX buffer size
+            use_global_ca_store: false, // Explicitly disable TLS for HTTP
+            crt_bundle_attach: None,    // No certificate bundle for HTTP
+            ..Default::default()
+        };
+        let conn =
+            EspHttpConnection::new(&configuration).context("creating the HTTP connection")?;
         let client = Client::wrap(conn);
         Ok(Self { client, base_url })
     }
 
     pub(crate) fn talk(&mut self) -> anyhow::Result<TalkData> {
         let uri = format!("{}/api/talk", self.base_url.trim_end_matches('/'));
+        info!("🌐 Attempting HTTP GET: {uri}");
+
         let request = self
             .client
             .get(&uri)
             .with_context(|| format!("build GET {uri} request"))?;
+
+        info!("🌐 Request built successfully, submitting...");
         let mut response = request.submit().with_context(|| format!("GET {uri}"))?;
         let status = response.status();
         info!("Status: [{status}]",);

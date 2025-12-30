@@ -15,7 +15,7 @@ TOBOGGAN_PORT = 8080
 
 [tasks.flash]
 description = "Flash the device"
-run = "espflash flash --monitor target/xtensa-esp32s3-espidf/release/toboggan-esp32"
+run = "espflash flash target/xtensa-esp32s3-espidf/release/toboggan-esp32"
 
 [tasks.ip]
 description = "Return the host IP"

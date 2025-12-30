@@ -2,3 +2,4 @@
 /.embuild
 /target
 components_esp32s3.lock
+.mise.local.toml

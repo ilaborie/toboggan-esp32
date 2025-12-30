@@ -124,7 +124,7 @@ pub fn connect_to_ws(host: &str, port: u16, tx: &mpsc::Sender<AppStateDiff>) -> 
     info!("🦋 WS connnected");
 
     // Register client
-    let message = r#"{"command":"Register","client":"801eb979-13c6-48c7-8ce0-78e1a3200bc6","renderer":"Html"}"#;
+    let message = r#"{"command":"Register","name":"ESP32"}"#;
     info!("Websocket send, text: {message}");
     client.send(FrameType::Text(false), message.as_bytes())?;
 
@@ -143,7 +143,7 @@ pub fn connect_to_ws(host: &str, port: u16, tx: &mpsc::Sender<AppStateDiff>) -> 
                     }
                 }
                 WsMessage::Blink => {
-                    // Send blink effect diff
+                    // Send blink diff
                     let diff = AppStateDiff::Blink;
                     if let Err(error) = tx.send(diff) {
                         error!("Failed to send blink diff: {error}, stopping WebSocket");
@@ -172,10 +172,7 @@ pub fn connect_to_ws(host: &str, port: u16, tx: &mpsc::Sender<AppStateDiff>) -> 
     Ok(())
 }
 
-fn handle_event(
-    producer: &mut Producer<WsMessage, 16>,
-    event: &Result<WebSocketEvent, EspIOError>,
-) {
+fn handle_event(producer: &mut Producer<WsMessage>, event: &Result<WebSocketEvent, EspIOError>) {
     let event = match event {
         Ok(event) => event,
         Err(err) => {

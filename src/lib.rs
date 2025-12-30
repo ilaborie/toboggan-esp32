@@ -135,7 +135,7 @@ pub fn run(peripherals: Peripherals, sysloop: EspSystemEventLoop) -> anyhow::Res
         } else {
             MAIN_LOOP_POLL_INTERVAL
         };
-        
+
         // Check for state diffs with dynamic timeout
         match diff_receiver.recv_timeout(timeout) {
             Ok(diff) => {
@@ -280,7 +280,7 @@ fn spawn_api_thread(
     info!("📶 WiFi connected, starting API loading");
     thread::Builder::new()
         .name("api_thread".to_string())
-        .stack_size(16 * 1024) // 16KB stack
+        .stack_size(32 * 1024) // 32KB stack for HTTP operations
         .spawn(move || {
             api_thread(diff_sender, talk_data_sender, port);
         })
@@ -440,36 +440,41 @@ fn api_thread(
     info!("🌐 API thread started");
 
     let base_url = format!("http://{TOBOGGAN_HOST}:{port}");
+    info!("🌐 Base URL: {base_url}");
+
     match Api::new(base_url) {
-        Ok(mut api) => match api.talk() {
-            Ok(talk_data) => {
-                info!(
-                    "📚 Talk loaded: title='{}', slides: {}",
-                    talk_data.title,
-                    talk_data.slide_count()
-                );
+        Ok(mut api) => {
+            info!("🌐 API client created successfully");
+            match api.talk() {
+                Ok(talk_data) => {
+                    info!(
+                        "📚 Talk loaded: title='{}', slides: {}",
+                        talk_data.title,
+                        talk_data.slide_count()
+                    );
 
-                // Send talk data through dedicated channel
-                if let Err(error) = talk_data_sender.send(talk_data) {
-                    log::error!("Failed to send talk data: {error}");
+                    // Send talk data through dedicated channel
+                    if let Err(error) = talk_data_sender.send(talk_data) {
+                        log::error!("Failed to send talk data: {error}");
+                    }
+
+                    // Send simple initialized state
+                    if let Err(error) =
+                        diff_sender.send(AppStateDiff::Transition(AppState::Initialized))
+                    {
+                        log::error!("Failed to send Initialized diff: {error}");
+                    }
                 }
-
-                // Send simple initialized state
-                if let Err(error) =
-                    diff_sender.send(AppStateDiff::Transition(AppState::Initialized))
-                {
-                    log::error!("Failed to send Initialized diff: {error}");
+                Err(error) => {
+                    log::error!("❌ Failed to load talk: {error:?}");
+                    if let Err(send_error) = diff_sender.send(AppStateDiff::Error {
+                        message: format!("Talk loading failed: {error}"),
+                    }) {
+                        log::error!("Failed to send Error diff: {send_error}");
+                    }
                 }
             }
-            Err(error) => {
-                log::error!("❌ Failed to load talk: {error:?}");
-                if let Err(send_error) = diff_sender.send(AppStateDiff::Error {
-                    message: format!("Talk loading failed: {error}"),
-                }) {
-                    log::error!("Failed to send Error diff: {send_error}");
-                }
-            }
-        },
+        }
         Err(error) => {
             log::error!("❌ Failed to create API client: {error:?}");
             if let Err(send_error) = diff_sender.send(AppStateDiff::Error {
