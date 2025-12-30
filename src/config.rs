@@ -2,6 +2,14 @@
 /// Following clean code principles by centralizing magic numbers and configuration
 use embedded_graphics::pixelcolor::Rgb565;
 
+/// Environment variables configuration
+pub mod env {
+    pub const WIFI_SSID: &str = env!("WIFI_SSID");
+    pub const WIFI_PASSWORD: &str = env!("WIFI_PASSWORD");
+    pub const TOBOGGAN_HOST: &str = env!("TOBOGGAN_HOST");
+    pub const TOBOGGAN_PORT: &str = env!("TOBOGGAN_PORT");
+}
+
 /// LED Configuration
 pub mod led {
     /// LED blink intervals in milliseconds
@@ -61,4 +69,24 @@ pub mod network {
     pub const CONNECTING_TEXT_PREFIX: &str = "Connecting to Wifi ";
     pub const CONNECTING_TEXT_SUFFIX: &str = "...";
     pub const LOADING_TALK_TEXT: &str = "Loading talk...";
+}
+
+/// Threading Configuration
+pub mod threading {
+    /// Stack sizes for worker threads
+    pub const WIFI_THREAD_STACK: usize = 32 * 1024;
+    pub const API_THREAD_STACK: usize = 32 * 1024;
+    pub const WEBSOCKET_THREAD_STACK: usize = 16 * 1024;
+}
+
+/// WebSocket Configuration
+pub mod websocket {
+    use std::time::Duration;
+
+    /// Message queue capacity
+    pub const MESSAGE_QUEUE_SIZE: usize = 16;
+
+    /// Connection timeout settings
+    pub const CONNECTION_TIMEOUT: Duration = Duration::from_secs(10);
+    pub const POLL_INTERVAL: Duration = Duration::from_millis(100);
 }

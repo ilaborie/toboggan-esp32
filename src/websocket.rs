@@ -1,4 +1,5 @@
-use std::{sync::mpsc, time::Duration};
+use std::sync::mpsc;
+use std::time::Duration;
 
 use anyhow::{bail, Context};
 use esp_idf_svc::io::EspIOError;
@@ -11,7 +12,8 @@ use heapless::spsc::{Producer, Queue};
 use log::{debug, error, info, warn};
 use serde::Deserialize;
 
-use crate::{AppStateDiff, StateMode};
+use crate::config::websocket::{CONNECTION_TIMEOUT, MESSAGE_QUEUE_SIZE, POLL_INTERVAL};
+use crate::{error_diff, AppStateDiff, StateMode};
 
 /// The PEM-encoded ISRG Root X1 certificate at the end of the cert chain
 /// for the websocket server at echo.websocket.org.
@@ -87,24 +89,23 @@ pub fn connect_to_ws(host: &str, port: u16, tx: &mpsc::Sender<AppStateDiff>) -> 
         server_cert: Some(X509::pem_until_nul(SERVER_ROOT_CERT)),
         ..Default::default()
     };
-    let timeout = Duration::from_secs(10);
 
     // Use heapless queue for lock-free communication
     // Leak the queue to make it effectively static for the closure
-    let ws_queue = Box::leak(Box::new(Queue::<WsMessage, 16>::new()));
+    let ws_queue = Box::leak(Box::new(Queue::<WsMessage, MESSAGE_QUEUE_SIZE>::new()));
     let (mut ws_producer, mut ws_consumer) = ws_queue.split();
 
     info!("🦋 WS connecting...");
 
-    let mut client = EspWebSocketClient::new(&uri, &config, timeout, move |event| {
+    let mut client = EspWebSocketClient::new(&uri, &config, CONNECTION_TIMEOUT, move |event| {
         handle_event(&mut ws_producer, event);
     })
     .context("creating WS client")?;
 
     // Wait for connection - poll the queue
     let mut connected = false;
-    for _ in 0..100 {
-        // 10 second timeout (100 * 100ms)
+    let poll_count = CONNECTION_TIMEOUT.as_millis() / POLL_INTERVAL.as_millis();
+    for _ in 0..poll_count {
         if let Some(first_event) = ws_consumer.dequeue() {
             match first_event {
                 WsMessage::Connected => {
@@ -114,7 +115,7 @@ pub fn connect_to_ws(host: &str, port: u16, tx: &mpsc::Sender<AppStateDiff>) -> 
                 other => bail!("Expected connected event, got {other:?}"),
             }
         }
-        std::thread::sleep(Duration::from_millis(100));
+        std::thread::sleep(POLL_INTERVAL);
     }
 
     if !connected {
@@ -156,8 +157,7 @@ pub fn connect_to_ws(host: &str, port: u16, tx: &mpsc::Sender<AppStateDiff>) -> 
                 }
                 WsMessage::Error { message } => {
                     info!("🦋 WS - error {message}");
-                    let diff = AppStateDiff::Error { message };
-                    if let Err(error) = tx.send(diff) {
+                    if let Err(error) = tx.send(error_diff!("{message}")) {
                         error!("Failed to send error diff: {error}, stopping WebSocket");
                         break;
                     }

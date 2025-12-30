@@ -1,7 +1,7 @@
 use anyhow::Context;
-use esp_idf_svc::{
-    eventloop::EspSystemEventLoop, hal::prelude::Peripherals, nvs::EspDefaultNvsPartition,
-};
+use esp_idf_svc::eventloop::EspSystemEventLoop;
+use esp_idf_svc::hal::prelude::Peripherals;
+use esp_idf_svc::nvs::EspDefaultNvsPartition;
 
 fn main() -> anyhow::Result<()> {
     esp_idf_svc::sys::link_patches();

@@ -20,14 +20,11 @@ impl From<Talk> for TalkData {
     }
 }
 
-// Allow dead code for API module since it's currently unused but will be needed
-#[allow(dead_code)]
 pub struct Api {
     client: Client<EspHttpConnection>,
     base_url: String,
 }
 
-#[allow(dead_code)]
 impl Api {
     pub(crate) fn new(base_url: String) -> anyhow::Result<Self> {
         let configuration = Configuration {

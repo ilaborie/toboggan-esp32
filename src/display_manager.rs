@@ -111,35 +111,31 @@ where
                     &FONT_8X13,
                 )?;
             }
-            _ => {
-                let (status_text, color) = match state {
-                    AppState::Booting => ("Booting...", COLOR_ORANGE),
-                    AppState::Connecting { ssid } => {
-                        self.render_simple_state("Connecting", COLOR_YELLOW, TITLE_LINE_START)?;
-                        let ssid_lines = Self::wrap_text(ssid, MAX_CHARS_PER_LINE);
-                        self.draw_text_at_lines(
-                            &ssid_lines,
-                            CURRENT_SLIDE_LINE_START,
-                            COLOR_YELLOW,
-                            &FONT_8X13,
-                        )?;
-                        return Ok(());
-                    }
-                    AppState::Connected { ssid } => {
-                        self.render_simple_state("Connected", COLOR_GREEN, TITLE_LINE_START)?;
-                        let ssid_lines = Self::wrap_text(ssid, MAX_CHARS_PER_LINE);
-                        self.draw_text_at_lines(
-                            &ssid_lines,
-                            CURRENT_SLIDE_LINE_START,
-                            COLOR_WHITE,
-                            &FONT_8X13,
-                        )?;
-                        return Ok(());
-                    }
-                    AppState::Loading => ("Loading talk...", COLOR_WHITE),
-                    _ => unreachable!(),
-                };
-                self.render_simple_state(status_text, color, TITLE_LINE_START + 3)?;
+            AppState::Booting => {
+                self.render_simple_state("Booting...", COLOR_ORANGE, TITLE_LINE_START + 3)?;
+            }
+            AppState::Connecting { ssid } => {
+                self.render_simple_state("Connecting", COLOR_YELLOW, TITLE_LINE_START)?;
+                let ssid_lines = Self::wrap_text(ssid, MAX_CHARS_PER_LINE);
+                self.draw_text_at_lines(
+                    &ssid_lines,
+                    CURRENT_SLIDE_LINE_START,
+                    COLOR_YELLOW,
+                    &FONT_8X13,
+                )?;
+            }
+            AppState::Connected { ssid } => {
+                self.render_simple_state("Connected", COLOR_GREEN, TITLE_LINE_START)?;
+                let ssid_lines = Self::wrap_text(ssid, MAX_CHARS_PER_LINE);
+                self.draw_text_at_lines(
+                    &ssid_lines,
+                    CURRENT_SLIDE_LINE_START,
+                    COLOR_WHITE,
+                    &FONT_8X13,
+                )?;
+            }
+            AppState::Loading => {
+                self.render_simple_state("Loading talk...", COLOR_WHITE, TITLE_LINE_START + 3)?;
             }
         }
 
@@ -196,7 +192,7 @@ where
     /// Render a simple centered status message
     fn render_simple_state(&mut self, text: &str, color: Rgb565, line: i32) -> anyhow::Result<()> {
         let display_size = self.display.bounding_box().size;
-        let center_x = i32::try_from(display_size.width).unwrap_or(0) / 2;
+        let center_x = i32::try_from(display_size.width).expect("display width fits in i32") / 2;
         let y_pos = line * LINE_HEIGHT;
 
         let text_style = MonoTextStyle::new(&FONT_8X13, color);
@@ -228,11 +224,12 @@ where
         font: &embedded_graphics::mono_font::MonoFont,
     ) -> anyhow::Result<()> {
         let display_size = self.display.bounding_box().size;
-        let center_x = i32::try_from(display_size.width).unwrap_or(0) / 2;
+        let center_x = i32::try_from(display_size.width).expect("display width fits in i32") / 2;
         let text_style = MonoTextStyle::new(font, color);
 
         for (index, line) in lines.iter().enumerate() {
-            let y_pos = (start_line + i32::try_from(index).unwrap_or(0)) * LINE_HEIGHT;
+            let y_pos =
+                (start_line + i32::try_from(index).expect("line index fits in i32")) * LINE_HEIGHT;
             Text::with_alignment(
                 line,
                 Point::new(center_x, y_pos),

@@ -1,7 +1,8 @@
 use std::fmt::Debug;
 
 use anyhow::Context;
-use embedded_graphics::{pixelcolor::Rgb565, prelude::DrawTarget};
+use embedded_graphics::pixelcolor::Rgb565;
+use embedded_graphics::prelude::DrawTarget;
 use esp_idf_svc::hal::delay::Ets;
 use esp_idf_svc::hal::gpio::{AnyInputPin, Gpio4, Gpio48, Gpio5, Gpio6, Gpio7, PinDriver};
 use esp_idf_svc::hal::spi::config::{Config, MODE_0};

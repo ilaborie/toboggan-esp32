@@ -1,6 +1,7 @@
 use anyhow::{bail, Result};
 use esp_idf_svc::eventloop::EspSystemEventLoop;
-use esp_idf_svc::hal::{modem::Modem, peripheral};
+use esp_idf_svc::hal::modem::Modem;
+use esp_idf_svc::hal::peripheral;
 use esp_idf_svc::wifi::{AuthMethod, BlockingWifi, ClientConfiguration, Configuration, EspWifi};
 use log::info;
 

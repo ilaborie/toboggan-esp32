@@ -1,6 +1,28 @@
+use std::sync::mpsc;
+
 use crate::config::app::{BOOTING_TEXT, ERROR_PREFIX};
 use crate::config::network::{CONNECTING_TEXT_PREFIX, CONNECTING_TEXT_SUFFIX, LOADING_TALK_TEXT};
-use std::sync::mpsc;
+
+/// Helper to send state diffs with consistent error logging
+pub fn send_diff(sender: &mpsc::Sender<AppStateDiff>, diff: AppStateDiff, context: &str) {
+    if let Err(error) = sender.send(diff) {
+        log::error!("Failed to send {context} diff: {error}");
+    }
+}
+
+/// Creates an `AppStateDiff::Error` with format! style arguments
+///
+/// # Examples
+/// ```ignore
+/// error_diff!("WiFi failed: {}", error)
+/// error_diff!("Connection timeout after {timeout:?}")
+/// ```
+#[macro_export]
+macro_rules! error_diff {
+    ($($arg:tt)*) => {
+        $crate::AppStateDiff::Error { message: format!($($arg)*) }
+    };
+}
 
 /// Static talk content that doesn't change during presentation
 #[derive(Debug, Clone, PartialEq, Hash)]
@@ -165,8 +187,7 @@ impl StateManager {
 
     /// Convenience method for errors
     pub fn transition_to_error(&mut self, error_message: impl Into<String>) {
-        self.send_diff(AppStateDiff::Error {
-            message: error_message.into(),
-        });
+        let message = error_message.into();
+        self.send_diff(error_diff!("{message}"));
     }
 }
