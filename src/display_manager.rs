@@ -1,4 +1,4 @@
-use embedded_graphics::mono_font::ascii::{FONT_8X13, FONT_8X13_BOLD};
+use embedded_graphics::mono_font::iso_8859_1::{FONT_9X18, FONT_9X18_BOLD};
 use embedded_graphics::mono_font::MonoTextStyle;
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::*;
@@ -108,7 +108,7 @@ where
                     &error_lines,
                     CURRENT_SLIDE_LINE_START,
                     COLOR_RED,
-                    &FONT_8X13,
+                    &FONT_9X18,
                 )?;
             }
             AppState::Booting => {
@@ -121,7 +121,7 @@ where
                     &ssid_lines,
                     CURRENT_SLIDE_LINE_START,
                     COLOR_YELLOW,
-                    &FONT_8X13,
+                    &FONT_9X18,
                 )?;
             }
             AppState::Connected { ssid } => {
@@ -131,7 +131,7 @@ where
                     &ssid_lines,
                     CURRENT_SLIDE_LINE_START,
                     COLOR_WHITE,
-                    &FONT_8X13,
+                    &FONT_9X18,
                 )?;
             }
             AppState::Loading => {
@@ -156,10 +156,10 @@ where
             StateMode::Done => COLOR_CYAN,
         };
 
-        // Render talk title (lines 2-3)
+        // Render talk title (lines 1-2)
         self.render_title(&talk_data.title, title_color)?;
 
-        // Render current slide (lines 7-11, bold)
+        // Render current slide (lines 4-8, bold)
         if let Some(current_slide) = talk_data.get_slide(current) {
             let current_lines = Self::wrap_text(current_slide, MAX_CHARS_PER_LINE);
             let limited_lines: Vec<_> = current_lines
@@ -170,11 +170,11 @@ where
                 &limited_lines,
                 CURRENT_SLIDE_LINE_START,
                 COLOR_WHITE,
-                &FONT_8X13_BOLD,
+                &FONT_9X18_BOLD,
             )?;
         }
 
-        // Render next slide (lines 13-14) if available
+        // Render next slide (lines 10-11) if available
         if let Some(next_slide) = talk_data.get_next_slide(current) {
             let next_lines = Self::wrap_text(next_slide, MAX_CHARS_PER_LINE);
             let limited_lines: Vec<_> = next_lines.into_iter().take(NEXT_SLIDE_MAX_LINES).collect();
@@ -182,7 +182,7 @@ where
                 &limited_lines,
                 NEXT_SLIDE_LINE_START,
                 COLOR_CYAN,
-                &FONT_8X13,
+                &FONT_9X18,
             )?;
         }
 
@@ -195,7 +195,7 @@ where
         let center_x = i32::try_from(display_size.width).expect("display width fits in i32") / 2;
         let y_pos = line * LINE_HEIGHT;
 
-        let text_style = MonoTextStyle::new(&FONT_8X13, color);
+        let text_style = MonoTextStyle::new(&FONT_9X18, color);
         Text::with_alignment(
             text,
             Point::new(center_x, y_pos),
@@ -212,7 +212,7 @@ where
     fn render_title(&mut self, title: &str, color: Rgb565) -> anyhow::Result<()> {
         let title_lines = Self::wrap_text(title, MAX_CHARS_PER_LINE);
         let limited_lines: Vec<_> = title_lines.into_iter().take(TITLE_MAX_LINES).collect();
-        self.draw_text_at_lines(&limited_lines, TITLE_LINE_START, color, &FONT_8X13)
+        self.draw_text_at_lines(&limited_lines, TITLE_LINE_START, color, &FONT_9X18)
     }
 
     /// Draw text lines at specific line positions

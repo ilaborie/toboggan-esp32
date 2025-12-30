@@ -21,18 +21,21 @@ pub mod led {
 pub mod display {
     use super::Rgb565;
 
-    /// Text rendering constants
-    pub const LINE_HEIGHT: i32 = 16;
+    /// Text rendering constants for FONT_9X18
+    /// Font dimensions: 9 pixels wide, 18 pixels tall
+    /// Display: 320x240 pixels → 35 chars/line, 12 lines max
+    pub const LINE_HEIGHT: i32 = 20;
     pub const BUFFER_SIZE: usize = 512;
 
-    /// Display layout constants
-    pub const TITLE_LINE_START: i32 = 2;
+    /// Display layout constants (optimized for 320x240 with FONT_9X18)
+    /// Title: lines 1-2, Current: lines 4-8, Next: lines 10-11
+    pub const TITLE_LINE_START: i32 = 1;
     pub const TITLE_MAX_LINES: usize = 2;
-    pub const CURRENT_SLIDE_LINE_START: i32 = 7;
+    pub const CURRENT_SLIDE_LINE_START: i32 = 4;
     pub const CURRENT_SLIDE_MAX_LINES: usize = 5;
-    pub const NEXT_SLIDE_LINE_START: i32 = 13;
+    pub const NEXT_SLIDE_LINE_START: i32 = 10;
     pub const NEXT_SLIDE_MAX_LINES: usize = 2;
-    pub const MAX_CHARS_PER_LINE: usize = 32;
+    pub const MAX_CHARS_PER_LINE: usize = 35;
 
     /// Display colors for different states - using explicit RGB values
     pub const COLOR_BLACK: Rgb565 = Rgb565::new(0x00, 0x00, 0x00);
