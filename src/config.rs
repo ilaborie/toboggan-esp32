@@ -28,14 +28,25 @@ pub mod display {
     pub const BUFFER_SIZE: usize = 512;
 
     /// Display layout constants (optimized for 320x240 with FONT_9X18)
-    /// Title: lines 1-2, Current: lines 4-8, Next: lines 10-11
-    pub const TITLE_LINE_START: i32 = 1;
+    /// Progress: line 1, Title: lines 2-3, Steps: line 4, Current: lines 5-8, Next: lines 10-11
+    pub const TITLE_LINE_START: i32 = 2;
     pub const TITLE_MAX_LINES: usize = 2;
-    pub const CURRENT_SLIDE_LINE_START: i32 = 4;
-    pub const CURRENT_SLIDE_MAX_LINES: usize = 5;
+    pub const CURRENT_SLIDE_LINE_START: i32 = 5;
+    pub const CURRENT_SLIDE_MAX_LINES: usize = 4;
     pub const NEXT_SLIDE_LINE_START: i32 = 10;
     pub const NEXT_SLIDE_MAX_LINES: usize = 2;
     pub const MAX_CHARS_PER_LINE: usize = 35;
+
+    /// Progress bar constants
+    pub const PROGRESS_BAR_LINE: i32 = 1;
+    pub const PROGRESS_BAR_HEIGHT: u32 = 8;
+    pub const PROGRESS_BAR_MARGIN: i32 = 20;
+
+    /// Step indicator constants
+    pub const STEP_INDICATOR_LINE: i32 = 4;
+    pub const STEP_DOT_RADIUS: u32 = 6;
+    pub const STEP_DOT_SPACING: i32 = 16;
+    pub const STEP_DOT_MAX_VISIBLE: usize = 15;
 
     /// Display colors for different states - using explicit RGB values
     pub const COLOR_BLACK: Rgb565 = Rgb565::new(0x00, 0x00, 0x00);

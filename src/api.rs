@@ -12,11 +12,21 @@ use crate::state::TalkData;
 struct Talk {
     pub title: String,
     pub titles: Vec<String>,
+    #[serde(default)]
+    pub step_counts: Vec<usize>,
 }
 
 impl From<Talk> for TalkData {
     fn from(talk: Talk) -> Self {
-        TalkData::new(talk.title, talk.titles)
+        // If step_counts is empty or shorter than titles, fill with 0s
+        let step_counts = if talk.step_counts.is_empty() {
+            vec![0; talk.titles.len()]
+        } else {
+            let mut counts = talk.step_counts;
+            counts.resize(talk.titles.len(), 0);
+            counts
+        };
+        TalkData::new(talk.title, talk.titles, step_counts)
     }
 }
 
