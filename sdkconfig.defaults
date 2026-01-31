@@ -3,6 +3,9 @@
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=20000
 CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE=4096
 
+# Use built-in large partition table (1500K app instead of 1MB)
+CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y
+
 # Use this to set FreeRTOS kernel tick frequency to 1000 Hz (100 Hz by default).
 # This allows to use 1 ms granularity for thread sleeps (10 ms by default).
 #CONFIG_FREERTOS_HZ=1000
