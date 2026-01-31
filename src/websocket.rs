@@ -237,7 +237,10 @@ fn send_unregister(client: &mut EspWebSocketClient, client_id: Option<&ClientId>
     }
 }
 
-fn handle_event(producer: &mut Producer<WsMessage>, event: &Result<WebSocketEvent, EspIOError>) {
+fn handle_event(
+    producer: &mut Producer<'_, WsMessage, MESSAGE_QUEUE_SIZE>,
+    event: &Result<WebSocketEvent, EspIOError>,
+) {
     let event = match event {
         Ok(event) => event,
         Err(err) => {

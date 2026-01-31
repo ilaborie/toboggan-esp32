@@ -48,6 +48,10 @@ pub mod display {
     pub const STEP_DOT_SPACING: i32 = 16;
     pub const STEP_DOT_MAX_VISIBLE: usize = 15;
 
+    /// Boot screen constants
+    pub const BOOT_STATUS_LINE: i32 = 11;
+    pub const BOOT_IMAGE_AREA_HEIGHT: i32 = 200; // Top 200px for boot image
+
     /// Display colors for different states - using explicit RGB values
     pub const COLOR_BLACK: Rgb565 = Rgb565::new(0x00, 0x00, 0x00);
     pub const COLOR_WHITE: Rgb565 = Rgb565::new(0x1F, 0x3F, 0x1F);

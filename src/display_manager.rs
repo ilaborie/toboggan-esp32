@@ -7,11 +7,11 @@ use embedded_graphics::text::{Alignment, Text};
 use log::info;
 
 use crate::config::display::{
-    COLOR_BLACK, COLOR_CYAN, COLOR_ERROR_BACKGROUND, COLOR_GREEN, COLOR_ORANGE, COLOR_RED,
-    COLOR_WHITE, COLOR_YELLOW, CURRENT_SLIDE_LINE_START, CURRENT_SLIDE_MAX_LINES, LINE_HEIGHT,
-    MAX_CHARS_PER_LINE, NEXT_SLIDE_LINE_START, NEXT_SLIDE_MAX_LINES, PROGRESS_BAR_HEIGHT,
-    PROGRESS_BAR_LINE, PROGRESS_BAR_MARGIN, STEP_DOT_MAX_VISIBLE, STEP_DOT_RADIUS,
-    STEP_DOT_SPACING, STEP_INDICATOR_LINE, TITLE_LINE_START, TITLE_MAX_LINES,
+    BOOT_STATUS_LINE, COLOR_BLACK, COLOR_CYAN, COLOR_ERROR_BACKGROUND, COLOR_GREEN, COLOR_ORANGE,
+    COLOR_RED, COLOR_WHITE, COLOR_YELLOW, CURRENT_SLIDE_LINE_START, CURRENT_SLIDE_MAX_LINES,
+    LINE_HEIGHT, MAX_CHARS_PER_LINE, NEXT_SLIDE_LINE_START, NEXT_SLIDE_MAX_LINES,
+    PROGRESS_BAR_HEIGHT, PROGRESS_BAR_LINE, PROGRESS_BAR_MARGIN, STEP_DOT_MAX_VISIBLE,
+    STEP_DOT_RADIUS, STEP_DOT_SPACING, STEP_INDICATOR_LINE, TITLE_LINE_START, TITLE_MAX_LINES,
 };
 use crate::state::{AppState, StateMode, TalkData};
 
@@ -21,6 +21,7 @@ where
 {
     pub display: D,
     current_state_hash: u64,
+    boot_image_displayed: bool,
 }
 
 impl<D> DisplayManager<D>
@@ -39,6 +40,7 @@ where
         Ok(Self {
             display,
             current_state_hash: 0,
+            boot_image_displayed: true,
         })
     }
 
@@ -77,6 +79,42 @@ where
         state: &AppState,
         talk_data: Option<&TalkData>,
     ) -> anyhow::Result<()> {
+        // Check if this is a boot state (displays boot image + status line)
+        let is_boot_state = matches!(
+            state,
+            AppState::Booting
+                | AppState::Connecting { .. }
+                | AppState::Connected { .. }
+                | AppState::Loading
+        );
+
+        if is_boot_state && self.boot_image_displayed {
+            // Only render status line at the bottom, keep boot image visible
+            match state {
+                AppState::Booting => {
+                    self.render_boot_status("Booting...", COLOR_ORANGE)?;
+                }
+                AppState::Connecting { ssid } => {
+                    let text = format!("Connecting to {ssid}...");
+                    self.render_boot_status(&text, COLOR_YELLOW)?;
+                }
+                AppState::Connected { ssid } => {
+                    let text = format!("Connected to {ssid}");
+                    self.render_boot_status(&text, COLOR_GREEN)?;
+                }
+                AppState::Loading => {
+                    self.render_boot_status("Loading talk...", COLOR_WHITE)?;
+                }
+                _ => {}
+            }
+            return Ok(());
+        }
+
+        // Transition away from boot image - clear and mark as no longer displayed
+        if self.boot_image_displayed {
+            self.boot_image_displayed = false;
+        }
+
         // Clear display
         let background_color = match state {
             AppState::Error { .. } => COLOR_ERROR_BACKGROUND,
@@ -118,6 +156,7 @@ where
                     &FONT_9X18,
                 )?;
             }
+            // Boot states with boot_image_displayed=false (shouldn't happen normally)
             AppState::Booting => {
                 self.render_simple_state("Booting...", COLOR_ORANGE, TITLE_LINE_START + 3)?;
             }
@@ -331,6 +370,30 @@ where
         .map_err(|_| anyhow::anyhow!("Failed to draw status text"))?;
 
         Ok(())
+    }
+
+    /// Render boot status text at the bottom of the screen (line 12)
+    /// Clears only the status line area, preserving the boot image above
+    fn render_boot_status(&mut self, text: &str, color: Rgb565) -> anyhow::Result<()> {
+        let display_size = self.display.bounding_box().size;
+        let display_width = display_size.width;
+
+        // Clear only the status line area (bottom 20 pixels)
+        let status_y = BOOT_STATUS_LINE * LINE_HEIGHT;
+        let status_rect = Rectangle::new(
+            Point::new(0, status_y - LINE_HEIGHT / 2),
+            Size::new(
+                display_width,
+                u32::try_from(LINE_HEIGHT).expect("line height fits"),
+            ),
+        );
+        status_rect
+            .into_styled(PrimitiveStyle::with_fill(COLOR_BLACK))
+            .draw(&mut self.display)
+            .map_err(|_| anyhow::anyhow!("Failed to clear status area"))?;
+
+        // Draw status text centered on line 12
+        self.render_simple_state(text, color, BOOT_STATUS_LINE)
     }
 
     /// Render the talk title with proper wrapping

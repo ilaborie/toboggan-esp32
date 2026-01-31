@@ -11,15 +11,16 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 use anyhow::Context;
+use embedded_graphics::image::Image;
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::*;
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::hal::gpio::PinDriver;
 use esp_idf_svc::hal::prelude::Peripherals;
 use log::info;
-use mipidsi::TestImage;
+use tinybmp::Bmp;
 
-use crate::config::display::BUFFER_SIZE;
+use crate::config::display::{BOOT_IMAGE_AREA_HEIGHT, BUFFER_SIZE};
 use crate::config::env::WIFI_SSID;
 use crate::config::timing::MAIN_LOOP_POLL_INTERVAL;
 use crate::services::{spawn_api_thread, spawn_websocket_thread, spawn_wifi_thread};
@@ -48,6 +49,7 @@ pub use self::display_manager::*;
 mod services;
 pub use self::services::{ServiceState, ServiceTracker};
 
+mod boot_image;
 mod config;
 
 /// Run the main application with synchronous threading model
@@ -112,10 +114,14 @@ pub fn run(peripherals: Peripherals, sysloop: EspSystemEventLoop) -> anyhow::Res
     // Deduplication - track last few diffs to prevent rapid cycling
     let mut last_diff: Option<AppStateDiff> = None;
 
-    // Show test image initially
-    let img = TestImage::<Rgb565>::new();
-    if let Err(error) = img.draw(&mut display_manager.display) {
-        log::error!("Failed to display test image: {error:?}");
+    // Show boot image initially
+    let bmp = Bmp::<Rgb565>::from_slice(boot_image::BOOT_IMAGE).expect("Invalid boot image");
+    let image_size = bmp.bounding_box().size;
+    let x = (320 - i32::try_from(image_size.width).expect("image width fits")) / 2;
+    let y =
+        (BOOT_IMAGE_AREA_HEIGHT - i32::try_from(image_size.height).expect("image height fits")) / 2;
+    if let Err(error) = Image::new(&bmp, Point::new(x, y)).draw(&mut display_manager.display) {
+        log::error!("Failed to display boot image: {error:?}");
     }
 
     info!("🚀 Starting main application loop");
