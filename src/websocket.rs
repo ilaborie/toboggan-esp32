@@ -168,7 +168,7 @@ pub fn connect_to_ws(host: &str, port: u16, tx: &mpsc::Sender<AppStateDiff>) -> 
     // Main message processing loop
     loop {
         if let Some(msg) = ws_consumer.dequeue() {
-            info!("🦋 WS incomming {msg:?}");
+            info!("🦋 WS incoming {msg:?}");
             match msg {
                 WsMessage::Connected => bail!("🦋 WS unexpected connected message"),
                 WsMessage::Registered { client_id: id } => {
@@ -237,7 +237,10 @@ fn send_unregister(client: &mut EspWebSocketClient, client_id: Option<&ClientId>
     }
 }
 
-fn handle_event(producer: &mut Producer<WsMessage>, event: &Result<WebSocketEvent, EspIOError>) {
+fn handle_event(
+    producer: &mut Producer<'_, WsMessage, MESSAGE_QUEUE_SIZE>,
+    event: &Result<WebSocketEvent, EspIOError>,
+) {
     let event = match event {
         Ok(event) => event,
         Err(err) => {

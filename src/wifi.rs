@@ -11,9 +11,8 @@ use log::info;
 /// Returns error if `WiFi` initialization fails, SSID/password conversion fails,
 /// scanning fails, or connection to the specified network fails
 ///
-/// # Panics  
+/// # Panics
 /// Panics if SSID or password cannot be converted to `WiFi` configuration format
-#[allow(clippy::min_ident_chars)]
 pub fn wifi_sync(
     ssid: &str,
     password: &str,

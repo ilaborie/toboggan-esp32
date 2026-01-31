@@ -185,8 +185,8 @@ impl StateManager {
 
     /// Apply a differential update (internal use - doesn't send to channel)
     pub fn apply_diff(&mut self, diff: &AppStateDiff) {
-        let old_state = self.current_state.clone();
-        self.current_state = self.current_state.clone().apply_diff(diff.clone());
+        let old_state = std::mem::replace(&mut self.current_state, AppState::Booting);
+        self.current_state = old_state.clone().apply_diff(diff.clone());
 
         if old_state != self.current_state {
             log::info!(
@@ -230,5 +230,292 @@ impl StateManager {
     pub fn transition_to_error(&mut self, error_message: impl Into<String>) {
         let message = error_message.into();
         self.send_diff(error_diff!("{message}"));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // =============================================================================
+    // TalkData Tests
+    // =============================================================================
+
+    #[test]
+    fn talk_data_new() {
+        let data = TalkData::new(
+            "Test Talk".to_string(),
+            vec!["Slide 1".to_string(), "Slide 2".to_string()],
+            vec![2, 3],
+        );
+
+        assert_eq!(data.title, "Test Talk");
+        assert_eq!(data.slides.len(), 2);
+        assert_eq!(data.step_counts.len(), 2);
+    }
+
+    #[test]
+    fn talk_data_slide_count() {
+        let data = TalkData::new(
+            "Test".to_string(),
+            vec!["A".to_string(), "B".to_string(), "C".to_string()],
+            vec![],
+        );
+
+        assert_eq!(data.slide_count(), 3);
+    }
+
+    #[test]
+    fn talk_data_get_slide() {
+        let data = TalkData::new(
+            "Test".to_string(),
+            vec!["First".to_string(), "Second".to_string()],
+            vec![],
+        );
+
+        assert_eq!(data.get_slide(0), Some("First"));
+        assert_eq!(data.get_slide(1), Some("Second"));
+        assert_eq!(data.get_slide(2), None);
+    }
+
+    #[test]
+    fn talk_data_get_next_slide() {
+        let data = TalkData::new(
+            "Test".to_string(),
+            vec![
+                "First".to_string(),
+                "Second".to_string(),
+                "Third".to_string(),
+            ],
+            vec![],
+        );
+
+        assert_eq!(data.get_next_slide(0), Some("Second"));
+        assert_eq!(data.get_next_slide(1), Some("Third"));
+        assert_eq!(data.get_next_slide(2), None);
+    }
+
+    #[test]
+    fn talk_data_get_step_count_default() {
+        let data = TalkData::new(
+            "Test".to_string(),
+            vec!["Slide".to_string()],
+            vec![], // Empty step counts
+        );
+
+        // Should default to 0 when step_counts is empty
+        assert_eq!(data.get_step_count(0), 0);
+        assert_eq!(data.get_step_count(100), 0);
+    }
+
+    #[test]
+    fn talk_data_get_step_count_with_data() {
+        let data = TalkData::new(
+            "Test".to_string(),
+            vec!["A".to_string(), "B".to_string()],
+            vec![3, 5],
+        );
+
+        assert_eq!(data.get_step_count(0), 3);
+        assert_eq!(data.get_step_count(1), 5);
+        assert_eq!(data.get_step_count(2), 0); // Out of bounds defaults to 0
+    }
+
+    // =============================================================================
+    // AppState::apply_diff Tests
+    // =============================================================================
+
+    #[test]
+    fn apply_diff_transition() {
+        let state = AppState::Booting;
+        let diff = AppStateDiff::Transition(AppState::Loading);
+
+        let new_state = state.apply_diff(diff);
+
+        assert_eq!(new_state, AppState::Loading);
+    }
+
+    #[test]
+    fn apply_diff_update_slide_from_initialized() {
+        let state = AppState::Initialized;
+        let diff = AppStateDiff::UpdateSlide {
+            current: 5,
+            current_step: 2,
+            mode: StateMode::Running,
+        };
+
+        let new_state = state.apply_diff(diff);
+
+        assert_eq!(
+            new_state,
+            AppState::Play {
+                current: 5,
+                current_step: 2,
+                mode: StateMode::Running,
+            }
+        );
+    }
+
+    #[test]
+    fn apply_diff_update_slide_from_play() {
+        let state = AppState::Play {
+            current: 1,
+            current_step: 0,
+            mode: StateMode::Running,
+        };
+        let diff = AppStateDiff::UpdateSlide {
+            current: 2,
+            current_step: 1,
+            mode: StateMode::Paused,
+        };
+
+        let new_state = state.apply_diff(diff);
+
+        assert_eq!(
+            new_state,
+            AppState::Play {
+                current: 2,
+                current_step: 1,
+                mode: StateMode::Paused,
+            }
+        );
+    }
+
+    #[test]
+    fn apply_diff_update_slide_ignored_in_wrong_state() {
+        let state = AppState::Booting;
+        let diff = AppStateDiff::UpdateSlide {
+            current: 5,
+            current_step: 2,
+            mode: StateMode::Running,
+        };
+
+        let new_state = state.apply_diff(diff);
+
+        // Should remain in Booting state
+        assert_eq!(new_state, AppState::Booting);
+    }
+
+    #[test]
+    fn apply_diff_update_slide_ignored_in_connecting() {
+        let state = AppState::Connecting {
+            ssid: "test".to_string(),
+        };
+        let diff = AppStateDiff::UpdateSlide {
+            current: 0,
+            current_step: 0,
+            mode: StateMode::Running,
+        };
+
+        let new_state = state.apply_diff(diff);
+
+        assert_eq!(
+            new_state,
+            AppState::Connecting {
+                ssid: "test".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn apply_diff_blink_preserves_state() {
+        let state = AppState::Play {
+            current: 3,
+            current_step: 1,
+            mode: StateMode::Running,
+        };
+        let diff = AppStateDiff::Blink;
+
+        let new_state = state.apply_diff(diff);
+
+        // Blink should not change the state
+        assert_eq!(
+            new_state,
+            AppState::Play {
+                current: 3,
+                current_step: 1,
+                mode: StateMode::Running,
+            }
+        );
+    }
+
+    #[test]
+    fn apply_diff_error_from_booting() {
+        let state = AppState::Booting;
+        let diff = AppStateDiff::Error {
+            message: "Test error".to_string(),
+        };
+
+        let new_state = state.apply_diff(diff);
+
+        assert_eq!(
+            new_state,
+            AppState::Error {
+                message: "Test error".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn apply_diff_error_from_play() {
+        let state = AppState::Play {
+            current: 5,
+            current_step: 2,
+            mode: StateMode::Running,
+        };
+        let diff = AppStateDiff::Error {
+            message: "Connection lost".to_string(),
+        };
+
+        let new_state = state.apply_diff(diff);
+
+        assert_eq!(
+            new_state,
+            AppState::Error {
+                message: "Connection lost".to_string()
+            }
+        );
+    }
+
+    // =============================================================================
+    // AppState::is_presentation_active Tests
+    // =============================================================================
+
+    #[test]
+    fn is_presentation_active_true_for_initialized() {
+        let state = AppState::Initialized;
+        assert!(state.is_presentation_active());
+    }
+
+    #[test]
+    fn is_presentation_active_true_for_play() {
+        let state = AppState::Play {
+            current: 0,
+            current_step: 0,
+            mode: StateMode::Running,
+        };
+        assert!(state.is_presentation_active());
+    }
+
+    #[test]
+    fn is_presentation_active_false_for_booting() {
+        let state = AppState::Booting;
+        assert!(!state.is_presentation_active());
+    }
+
+    #[test]
+    fn is_presentation_active_false_for_connecting() {
+        let state = AppState::Connecting {
+            ssid: "test".to_string(),
+        };
+        assert!(!state.is_presentation_active());
+    }
+
+    #[test]
+    fn is_presentation_active_false_for_error() {
+        let state = AppState::Error {
+            message: "test".to_string(),
+        };
+        assert!(!state.is_presentation_active());
     }
 }

@@ -11,15 +11,16 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 use anyhow::Context;
+use embedded_graphics::image::Image;
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::*;
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::hal::gpio::PinDriver;
 use esp_idf_svc::hal::prelude::Peripherals;
 use log::info;
-use mipidsi::TestImage;
+use tinybmp::Bmp;
 
-use crate::config::display::BUFFER_SIZE;
+use crate::config::display::{BOOT_IMAGE_AREA_HEIGHT, BUFFER_SIZE};
 use crate::config::env::WIFI_SSID;
 use crate::config::timing::MAIN_LOOP_POLL_INTERVAL;
 use crate::services::{spawn_api_thread, spawn_websocket_thread, spawn_wifi_thread};
@@ -48,7 +49,43 @@ pub use self::display_manager::*;
 mod services;
 pub use self::services::{ServiceState, ServiceTracker};
 
+mod boot_image;
 mod config;
+
+/// Tracks consecutive hardware failures for graceful degradation
+struct FailureTracker {
+    display_failures: u8,
+    led_failures: u8,
+    max_failures: u8,
+}
+
+impl FailureTracker {
+    fn new(max_failures: u8) -> Self {
+        Self {
+            display_failures: 0,
+            led_failures: 0,
+            max_failures,
+        }
+    }
+
+    fn record_display_failure(&mut self) -> bool {
+        self.display_failures = self.display_failures.saturating_add(1);
+        self.display_failures >= self.max_failures
+    }
+
+    fn record_led_failure(&mut self) -> bool {
+        self.led_failures = self.led_failures.saturating_add(1);
+        self.led_failures >= self.max_failures
+    }
+
+    fn reset_display(&mut self) {
+        self.display_failures = 0;
+    }
+
+    fn reset_led(&mut self) {
+        self.led_failures = 0;
+    }
+}
 
 /// Run the main application with synchronous threading model
 ///
@@ -112,10 +149,21 @@ pub fn run(peripherals: Peripherals, sysloop: EspSystemEventLoop) -> anyhow::Res
     // Deduplication - track last few diffs to prevent rapid cycling
     let mut last_diff: Option<AppStateDiff> = None;
 
-    // Show test image initially
-    let img = TestImage::<Rgb565>::new();
-    if let Err(error) = img.draw(&mut display_manager.display) {
-        log::error!("Failed to display test image: {error:?}");
+    // Show boot image initially (graceful degradation if parsing fails)
+    match Bmp::<Rgb565>::from_slice(boot_image::BOOT_IMAGE) {
+        Ok(bmp) => {
+            let image_size = bmp.bounding_box().size;
+            let x = (320 - i32::try_from(image_size.width).unwrap_or(0)) / 2;
+            let y = (BOOT_IMAGE_AREA_HEIGHT - i32::try_from(image_size.height).unwrap_or(0)) / 2;
+            if let Err(error) =
+                Image::new(&bmp, Point::new(x, y)).draw(&mut display_manager.display)
+            {
+                log::error!("Failed to display boot image: {error:?}");
+            }
+        }
+        Err(error) => {
+            log::error!("Failed to parse boot image: {error:?}");
+        }
     }
 
     info!("🚀 Starting main application loop");
@@ -128,6 +176,7 @@ pub fn run(peripherals: Peripherals, sysloop: EspSystemEventLoop) -> anyhow::Res
     });
 
     let mut services = ServiceTracker::default();
+    let mut failure_tracker = FailureTracker::new(5);
 
     // Main loop: handle differential updates and transient effects
     loop {
@@ -154,14 +203,8 @@ pub fn run(peripherals: Peripherals, sysloop: EspSystemEventLoop) -> anyhow::Res
                 }
 
                 // Apply the diff locally (don't send back to channel)
-                let old_state = state_manager.current_state().clone();
+                // StateManager logs state transitions internally
                 state_manager.apply_diff(&diff);
-                let new_state = state_manager.current_state().clone();
-
-                // Log state transitions for debugging
-                if old_state != new_state {
-                    info!("🔄 State transition: {old_state:?} -> {new_state:?}");
-                }
 
                 last_diff = Some(diff);
 
@@ -171,21 +214,37 @@ pub fn run(peripherals: Peripherals, sysloop: EspSystemEventLoop) -> anyhow::Res
                     talk_data = Some(new_talk_data);
                 }
 
-                // Update display
+                // Update display with failure tracking
                 info!(
                     "📺 Updating display for state: {:?}, talk_data available: {}",
                     state_manager.current_state(),
                     talk_data.is_some()
                 );
-                if let Err(error) = display_manager
+                match display_manager
                     .update_display(state_manager.current_state(), talk_data.as_ref())
                 {
-                    log::error!("Failed to update display: {error:?}");
+                    Ok(()) => failure_tracker.reset_display(),
+                    Err(error) => {
+                        log::error!("Failed to update display: {error:?}");
+                        if failure_tracker.record_display_failure() {
+                            log::error!("Too many consecutive display failures, transitioning to error state");
+                            state_manager.transition_to_error("Display hardware failure");
+                        }
+                    }
                 }
 
-                // Update LEDs based on state
-                if let Err(error) = led_controller.update(state_manager.current_state()) {
-                    log::error!("Failed to update LEDs: {error:?}");
+                // Update LEDs with failure tracking
+                match led_controller.update(state_manager.current_state()) {
+                    Ok(()) => failure_tracker.reset_led(),
+                    Err(error) => {
+                        log::error!("Failed to update LEDs: {error:?}");
+                        if failure_tracker.record_led_failure() {
+                            log::error!(
+                                "Too many consecutive LED failures, transitioning to error state"
+                            );
+                            state_manager.transition_to_error("LED hardware failure");
+                        }
+                    }
                 }
 
                 // Handle state-specific actions
