@@ -168,7 +168,7 @@ pub fn connect_to_ws(host: &str, port: u16, tx: &mpsc::Sender<AppStateDiff>) -> 
     // Main message processing loop
     loop {
         if let Some(msg) = ws_consumer.dequeue() {
-            info!("🦋 WS incomming {msg:?}");
+            info!("🦋 WS incoming {msg:?}");
             match msg {
                 WsMessage::Connected => bail!("🦋 WS unexpected connected message"),
                 WsMessage::Registered { client_id: id } => {

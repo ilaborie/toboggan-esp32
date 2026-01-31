@@ -255,8 +255,8 @@ where
         let display_size = self.display.bounding_box().size;
         let display_width = i32::try_from(display_size.width).expect("width fits in i32");
 
-        // Limit visible dots
-        let visible_count = step_count.min(STEP_DOT_MAX_VISIBLE);
+        // Limit visible dots (step_count is additional steps, so total positions = step_count + 1)
+        let visible_count = (step_count + 1).min(STEP_DOT_MAX_VISIBLE);
 
         // Calculate starting X position to center the dots
         let total_width = (visible_count as i32 - 1) * STEP_DOT_SPACING;
@@ -330,7 +330,8 @@ where
         .draw(&mut self.display)
         .map_err(|_| anyhow::anyhow!("Failed to draw progress bar background"))?;
 
-        // Calculate fill width: (current + 1) / total
+        // Calculate fill width using (current + 1) / total to show progress even on first slide
+        // (slide 0 shows 1/N progress, not 0/N)
         let progress = (current + 1) as f32 / total as f32;
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         let fill_width = (bar_width as f32 * progress) as u32;

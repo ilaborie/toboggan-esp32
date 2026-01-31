@@ -108,3 +108,14 @@ pub mod websocket {
     pub const CONNECTION_TIMEOUT: Duration = Duration::from_secs(10);
     pub const POLL_INTERVAL: Duration = Duration::from_millis(100);
 }
+
+/// Reconnection Configuration
+pub mod reconnect {
+    use std::time::Duration;
+
+    /// Initial delay before first retry attempt
+    pub const INITIAL_DELAY: Duration = Duration::from_secs(5);
+
+    /// Maximum delay between retry attempts (caps exponential backoff)
+    pub const MAX_DELAY: Duration = Duration::from_secs(60);
+}

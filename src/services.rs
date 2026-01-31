@@ -15,6 +15,7 @@ use esp_idf_svc::hal::modem::Modem;
 use log::{error, info};
 
 use crate::config::env::{TOBOGGAN_HOST, WIFI_PASSWORD, WIFI_SSID};
+use crate::config::reconnect::{INITIAL_DELAY, MAX_DELAY};
 use crate::config::threading;
 use crate::state::{send_diff, AppState, AppStateDiff, TalkData};
 use crate::{connect_to_ws, error_diff, wifi_sync, Api};
@@ -194,12 +195,29 @@ fn api_thread(
     }
 }
 
-/// WebSocket connection thread
+/// WebSocket connection thread with automatic reconnection
 #[allow(clippy::needless_pass_by_value)] // Need owned values for thread
 fn websocket_thread(diff_sender: mpsc::Sender<AppStateDiff>, port: u16) {
     info!("🔌 WebSocket thread started");
 
-    if let Err(err) = connect_to_ws(TOBOGGAN_HOST, port, &diff_sender) {
-        error!("Fail to connect to WS: {err:?}");
+    let mut delay = INITIAL_DELAY;
+
+    loop {
+        match connect_to_ws(TOBOGGAN_HOST, port, &diff_sender) {
+            Ok(()) => {
+                // Connection closed gracefully, reset delay for next attempt
+                info!("🔌 WebSocket connection closed, will reconnect");
+                delay = INITIAL_DELAY;
+            }
+            Err(err) => {
+                error!("🔌 WebSocket connection failed: {err:?}");
+            }
+        }
+
+        info!("🔌 Reconnecting WebSocket in {:?}", delay);
+        thread::sleep(delay);
+
+        // Exponential backoff, capped at MAX_DELAY
+        delay = delay.saturating_mul(2).min(MAX_DELAY);
     }
 }
