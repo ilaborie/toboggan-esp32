@@ -1,0 +1,15 @@
+# Wokwi simulator configuration — see README "Simulating without hardware".
+#
+# Build with `mise run sim-build`: the firmware bakes WIFI_SSID / TOBOGGAN_HOST
+# in at compile time, so a device build points at the wrong network.
+
+[wokwi]
+version = 1
+firmware = 'target/xtensa-esp32s3-espidf/release/toboggan-esp32'
+elf = 'target/xtensa-esp32s3-espidf/release/toboggan-esp32'
+
+# Routes the simulated WiFi through `wokwigw` on this machine, which is what
+# makes `host.wokwi.internal` resolve to the local toboggan server.
+# Read by the VS Code extension only — wokwi-cli's config parser ignores it, so
+# headless runs always go through Wokwi's cloud gateway.
+gateway = 'ws://localhost:9011'

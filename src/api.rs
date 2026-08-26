@@ -65,28 +65,45 @@ impl Api {
         let status = response.status();
         info!("Status: [{status}]",);
 
-        if !(200..300).contains(&status) {
-            bail!("HTTP status not OK ({status})");
-        }
-
         let mut result = vec![];
         let mut buf = [0_u8; 256];
-        let mut total = 0;
-        while let Ok(size) = response.read(&mut buf) {
-            total += size;
+        loop {
+            // A read error used to end this loop silently, so a truncated body
+            // resurfaced as a bewildering JSON parse failure.
+            let size = response
+                .read(&mut buf)
+                .with_context(|| format!("read the {uri} body after {} bytes", result.len()))?;
             if size == 0 {
                 break;
             }
             result.extend(buf.get(0..size).unwrap_or(&[]));
         }
-        debug!("total len: {total}");
+        debug!("total len: {}", result.len());
 
-        let json_str = String::from_utf8(result).context("Invalid UTF8 response")?;
-        debug!("JSON response: {json_str}");
+        let body = String::from_utf8_lossy(&result);
+        debug!("JSON response: {body}");
 
-        let talk: Talk =
-            serde_json::from_str(&json_str).context("Failed to parse JSON response as Talk")?;
+        if !(200..300).contains(&status) {
+            bail!("HTTP {status}: {}", snippet(&body));
+        }
+
+        let talk = serde_json::from_str::<Talk>(&body)
+            .with_context(|| format!("parse the talk from {}", snippet(&body)))?;
 
         Ok(talk.into())
+    }
+}
+
+/// Trims a response body down to something a 320x240 screen can carry.
+fn snippet(body: &str) -> String {
+    const MAX: usize = 80;
+
+    let trimmed = body.trim();
+    if trimmed.is_empty() {
+        return "<empty body>".to_string();
+    }
+    match trimmed.char_indices().nth(MAX) {
+        Some((index, _)) => format!("{}...", &trimmed[..index]),
+        None => trimmed.to_string(),
     }
 }

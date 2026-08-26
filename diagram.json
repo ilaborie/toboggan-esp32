@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "author": "Igor Laborie",
+  "editor": "wokwi",
+  "parts": [
+    {
+      "type": "board-esp32-s3-devkitc-1",
+      "id": "esp",
+      "top": 0,
+      "left": 0,
+      "attrs": { "flashSize": "16", "psramSize": "8", "psramType": "octal" }
+    },
+    {
+      "type": "wokwi-ili9341",
+      "id": "lcd",
+      "top": -130,
+      "left": 220,
+      "attrs": { "swapXY": "1" }
+    },
+    {
+      "type": "wokwi-rgb-led",
+      "id": "led",
+      "top": 60,
+      "left": -130,
+      "attrs": { "common": "cathode" }
+    }
+  ],
+  "connections": [
+    ["esp:7", "lcd:SCK", "green", []],
+    ["esp:6", "lcd:MOSI", "green", []],
+    ["esp:4", "lcd:D/C", "green", []],
+    ["esp:5", "lcd:CS", "green", []],
+    ["esp:48", "lcd:RST", "green", []],
+    ["esp:47", "lcd:LED", "orange", []],
+    ["esp:3V3.1", "lcd:VCC", "red", []],
+    ["esp:GND.1", "lcd:GND", "black", []],
+
+    ["esp:39", "led:R", "red", []],
+    ["esp:40", "led:G", "green", []],
+    ["esp:41", "led:B", "blue", []],
+    ["esp:GND.2", "led:COM", "black", []],
+
+    ["esp:TX", "$serialMonitor:RX", "", []],
+    ["esp:RX", "$serialMonitor:TX", "", []]
+  ]
+}

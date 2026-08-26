@@ -14,11 +14,17 @@ use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::hal::modem::Modem;
 use log::{error, info};
 
-use crate::config::env::{TOBOGGAN_HOST, WIFI_PASSWORD, WIFI_SSID};
+use crate::config::env::{WIFI_PASSWORD, WIFI_SSID};
 use crate::config::reconnect::{INITIAL_DELAY, MAX_DELAY};
 use crate::config::threading;
-use crate::state::{send_diff, AppState, AppStateDiff, TalkData};
-use crate::{connect_to_ws, error_diff, wifi_sync, Api};
+use crate::state::{error_chain, send_diff, AppState, AppStateDiff, TalkData};
+use crate::{connect_to_ws, error_diff, server_addr, wifi_sync, Api};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TalkFetch {
+    Initial,
+    Reload,
+}
 
 /// Tracks the life cycle state of background service threads
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -75,13 +81,14 @@ pub fn spawn_api_thread(
     diff_sender: mpsc::Sender<AppStateDiff>,
     talk_data_sender: mpsc::Sender<TalkData>,
     port: u16,
+    fetch: TalkFetch,
 ) -> anyhow::Result<()> {
-    info!("📶 WiFi connected, starting API loading");
+    info!("📶 Starting API loading ({fetch:?})");
     thread::Builder::new()
         .name("api_thread".to_string())
         .stack_size(threading::API_THREAD_STACK)
         .spawn(move || {
-            api_thread(diff_sender, talk_data_sender, port);
+            api_thread(diff_sender, talk_data_sender, port, fetch);
         })
         .context("Failed to spawn API thread")?;
     Ok(())
@@ -108,34 +115,35 @@ pub fn spawn_websocket_thread(
 fn wifi_thread(diff_sender: mpsc::Sender<AppStateDiff>, modem: Modem, sysloop: EspSystemEventLoop) {
     info!("📶 WiFi thread started");
 
-    match wifi_sync(WIFI_SSID, WIFI_PASSWORD, modem, sysloop) {
-        Ok(wifi) => {
-            info!("✅ WiFi connected successfully");
-            send_diff(
-                &diff_sender,
-                AppStateDiff::Transition(AppState::Connected {
-                    ssid: WIFI_SSID.to_string(),
-                }),
-                "Connected",
-            );
-
-            // Keep the WiFi connection alive by holding the wifi object
-            // This prevents the WiFi driver from being dropped
-            let _wifi = wifi; // Move ownership to keep it alive
-
-            // Sleep forever to keep the thread and WiFi connection alive
-            loop {
-                thread::sleep(Duration::from_secs(3600)); // Sleep for 1 hour at a time
-            }
-        }
+    let wifi = match wifi_sync(WIFI_SSID, WIFI_PASSWORD, modem, sysloop) {
+        Ok(wifi) => wifi,
         Err(error) => {
             log::error!("❌ WiFi connection failed: {error:?}");
             send_diff(
                 &diff_sender,
-                error_diff!("WiFi failed: {error}"),
+                error_diff!("WiFi failed: {}", error_chain(&error)),
                 "WiFi error",
             );
+            return;
         }
+    };
+
+    info!("✅ WiFi connected successfully");
+    send_diff(
+        &diff_sender,
+        AppStateDiff::Transition(AppState::Connected {
+            ssid: WIFI_SSID.to_string(),
+        }),
+        "Connected",
+    );
+
+    // Keep the WiFi connection alive by holding the wifi object
+    // This prevents the WiFi driver from being dropped
+    let _wifi = wifi; // Move ownership to keep it alive
+
+    // Sleep forever to keep the thread and WiFi connection alive
+    loop {
+        thread::sleep(Duration::from_secs(3600)); // Sleep for 1 hour at a time
     }
 }
 
@@ -145,54 +153,56 @@ fn api_thread(
     diff_sender: mpsc::Sender<AppStateDiff>,
     talk_data_sender: mpsc::Sender<TalkData>,
     port: u16,
+    fetch: TalkFetch,
 ) {
-    info!("🌐 API thread started");
+    info!("🌐 API thread started ({fetch:?})");
 
-    let base_url = format!("http://{TOBOGGAN_HOST}:{port}");
-    info!("🌐 Base URL: {base_url}");
-
-    match Api::new(base_url) {
-        Ok(mut api) => {
-            info!("🌐 API client created successfully");
-            match api.talk() {
-                Ok(talk_data) => {
-                    info!(
-                        "📚 Talk loaded: title='{}', slides: {}",
-                        talk_data.title,
-                        talk_data.slide_count()
-                    );
-
-                    // Send talk data through dedicated channel
-                    if let Err(error) = talk_data_sender.send(talk_data) {
-                        log::error!("Failed to send talk data: {error}");
-                    }
-
-                    // Send simple initialized state
-                    send_diff(
-                        &diff_sender,
-                        AppStateDiff::Transition(AppState::Initialized),
-                        "Initialized",
-                    );
-                }
-                Err(error) => {
-                    log::error!("❌ Failed to load talk: {error:?}");
-                    send_diff(
-                        &diff_sender,
-                        error_diff!("Talk loading failed: {error}"),
-                        "Talk loading error",
-                    );
-                }
+    if let Err(error) = server_addr(port).and_then(|address| {
+        let base_url = format!("http://{address}");
+        info!("🌐 Base URL: {base_url}");
+        load_talk(&talk_data_sender, base_url)
+    }) {
+        match fetch {
+            TalkFetch::Initial => {
+                log::error!("❌ Failed to load talk: {error:?}");
+                send_diff(
+                    &diff_sender,
+                    error_diff!("{}", error_chain(&error)),
+                    "Talk loading error",
+                );
+            }
+            TalkFetch::Reload => {
+                log::warn!("⚠️ Talk reload failed, keeping the previous talk: {error:?}");
             }
         }
-        Err(error) => {
-            log::error!("❌ Failed to create API client: {error:?}");
-            send_diff(
-                &diff_sender,
-                error_diff!("API client failed: {error}"),
-                "API client error",
-            );
-        }
+        return;
     }
+
+    // Only the first load announces this, and it is what starts the WebSocket.
+    if fetch == TalkFetch::Initial {
+        send_diff(
+            &diff_sender,
+            AppStateDiff::Transition(AppState::Initialized),
+            "Initialized",
+        );
+    }
+}
+
+/// Fetches the talk and hands it to the main loop.
+fn load_talk(talk_data_sender: &mpsc::Sender<TalkData>, base_url: String) -> anyhow::Result<()> {
+    let mut api = Api::new(base_url).context("create the API client")?;
+    let talk_data = api.talk()?;
+    info!(
+        "📚 Talk loaded: title='{}', slides: {}",
+        talk_data.title,
+        talk_data.slide_count()
+    );
+
+    talk_data_sender
+        .send(talk_data)
+        .context("send the talk data")?;
+
+    Ok(())
 }
 
 /// WebSocket connection thread with automatic reconnection
@@ -203,7 +213,9 @@ fn websocket_thread(diff_sender: mpsc::Sender<AppStateDiff>, port: u16) {
     let mut delay = INITIAL_DELAY;
 
     loop {
-        match connect_to_ws(TOBOGGAN_HOST, port, &diff_sender) {
+        // Already resolved by the API thread, which must succeed before this one
+        // is ever spawned, so this is a cache hit rather than a second lookup.
+        match server_addr(port).and_then(|address| connect_to_ws(address, &diff_sender)) {
             Ok(()) => {
                 // Connection closed gracefully, reset delay for next attempt
                 info!("🔌 WebSocket connection closed, will reconnect");

@@ -30,8 +30,24 @@ Create `.mise.local.toml` (gitignored):
 [env]
 WIFI_SSID = "your-wifi-network"
 WIFI_PASSWORD = "your-password"
-TOBOGGAN_HOST = "192.168.1.100"
+TOBOGGAN_HOST = "your-laptop.local"
+TOBOGGAN_HOST_FALLBACK = "192.168.1.100"   # optional
 TOBOGGAN_PORT = "8080"
+```
+
+Prefer your machine's Bonjour name (`mise run host`) over a literal address: the
+box resolves `.local` over multicast mDNS, so the same firmware keeps working
+when you move between the home network and a phone hotspot.
+
+mDNS needs the network to forward multicast, which guest and client-isolated
+WiFi often do not. `TOBOGGAN_HOST_FALLBACK` (from `mise run ip`) is tried when
+the `.local` name does not resolve. The address is resolved once per boot and
+shared by the HTTP and WebSocket clients, and every attempt is logged:
+
+```
+🔍 Resolving your-laptop.local:8080
+🔍 Could not resolve your-laptop.local: failed to lookup address information
+🔍 Falling back to 192.168.1.100 (192.168.1.100:8080): your-laptop.local did not resolve
 ```
 
 ### Build and Flash
@@ -44,10 +60,66 @@ cargo build --release
 cargo espflash flash --monitor --release
 ```
 
+## Simulating without hardware
+
+The firmware runs in the [Wokwi](https://wokwi.com/) simulator, which emulates
+the ESP32-S3 core, GPIO, SPI, and WiFi and renders the LCD. QEMU is not an
+option: the Espressif build pinned by this project's ESP-IDF supports `esp32`
+only, and it emulates neither the WiFi radio nor a display.
+
+`diagram.json` wires the same GPIOs the real board uses. Wokwi has no
+ESP32-S3-BOX part, so it uses the DevKitC with an ILI9341 panel. That panel is
+natively portrait 240x320, while the box's ILI9342C is landscape 320x240, and
+nothing in the firmware can bridge that: the simulated screen shows the frame
+rotated a quarter turn with the overflowing columns wrapped down the side.
+Colors and text are faithful; pixel-exact layout is not. Read it as "did the
+right thing get drawn", not as a preview of the box.
+
+Simulator builds need their own `WIFI_SSID` / `TOBOGGAN_HOST`, because
+`src/config.rs` bakes them in with `env!` at compile time. `mise run sim-build`
+sets them; `mise run build` targets the real box. Both write the same binary, so
+`mise run flash` depends on `build` to re-bake the device values first —
+otherwise the box would boot looking for `Wokwi-GUEST`.
+
+### Headless (CI)
+
+```bash
+mise install    # provides wokwi-cli and wokwigw
+# then put WOKWI_CLI_TOKEN from https://wokwi.com/dashboard/ci in .mise.local.toml
+mise run sim-test
+```
+
+Runs `wokwi/boot.test.yaml` in Wokwi's cloud. The cloud cannot reach a server
+on your machine, so the run deliberately ends in the talk-fetch error path —
+covering boot, display init, the WiFi join, and error rendering in one go.
+
+The two screenshots are compared against `wokwi/golden/`, which is committed.
+Rendering is byte-deterministic, so any diff is a real change. To refresh a
+golden after an intentional display change, copy it up from `wokwi/out/` (where
+every run leaves the actual frame) and eyeball it first.
+
+### Live, against a local toboggan server
+
+The [private gateway](https://github.com/wokwi/wokwigw) makes
+`host.wokwi.internal` resolve to this machine, which is what lets the simulated
+board talk to a real server. It is read from `wokwi.toml` by the **VS Code
+extension only** (install `Wokwi.wokwi-vscode`) — `wokwi-cli` has no such
+option, so headless runs can never reach a local server.
+
+```bash
+toboggan --host 0.0.0.0 --port 8080   # NOT from this repo: it reads
+                                      # TOBOGGAN_HOST/PORT as its own bind address
+mise run sim-gateway                  # wokwigw, ws://localhost:9011
+mise run sim-build                    # then F1 -> "Wokwi: Start Simulator"
+```
+
+This is the only way to exercise the full WebSocket protocol — registration,
+slide updates, talk reloads — without flashing the box.
+
 ## Architecture
 
 - **Multi-threaded**: WiFi, API, WebSocket, and main display loop
-- **State machine**: Booting → Connecting → Loading → Play/Paused/Done
+- **State machine**: Booting → Connecting → Connected → Loading → Initialized → Play (Running/Done)
 - **Message passing**: Workers communicate via `std::sync::mpsc` channels
 - **LED indicators**: Visual feedback for each application state
 

@@ -198,7 +198,6 @@ where
     ) -> anyhow::Result<()> {
         // Determine title color based on play mode
         let title_color = match mode {
-            StateMode::Paused => COLOR_YELLOW,
             StateMode::Running => COLOR_GREEN,
             StateMode::Done => COLOR_CYAN,
         };
@@ -266,7 +265,6 @@ where
         // Choose colors based on mode
         let filled_color = match mode {
             StateMode::Running => COLOR_GREEN,
-            StateMode::Paused => COLOR_YELLOW,
             StateMode::Done => COLOR_CYAN,
         };
 
@@ -339,7 +337,6 @@ where
         // Draw filled portion
         let fill_color = match mode {
             StateMode::Running => COLOR_GREEN,
-            StateMode::Paused => COLOR_YELLOW,
             StateMode::Done => COLOR_CYAN,
         };
         let fill_style = PrimitiveStyle::with_fill(fill_color);

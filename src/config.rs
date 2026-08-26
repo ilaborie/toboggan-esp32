@@ -8,6 +8,10 @@ pub mod env {
     pub const WIFI_PASSWORD: &str = env!("WIFI_PASSWORD");
     pub const TOBOGGAN_HOST: &str = env!("TOBOGGAN_HOST");
     pub const TOBOGGAN_PORT: &str = env!("TOBOGGAN_PORT");
+
+    /// Tried when `TOBOGGAN_HOST` does not resolve, so an mDNS `.local` name can
+    /// fall back to a literal address on a network that blocks multicast.
+    pub const TOBOGGAN_HOST_FALLBACK: Option<&str> = option_env!("TOBOGGAN_HOST_FALLBACK");
 }
 
 /// LED Configuration

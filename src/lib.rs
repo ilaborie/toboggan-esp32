@@ -31,6 +31,9 @@ pub use self::wifi::*;
 mod api;
 pub use self::api::*;
 
+mod host;
+pub use self::host::*;
+
 mod websocket;
 pub use self::websocket::*;
 
@@ -47,7 +50,7 @@ mod display_manager;
 pub use self::display_manager::*;
 
 mod services;
-pub use self::services::{ServiceState, ServiceTracker};
+pub use self::services::{ServiceState, ServiceTracker, TalkFetch};
 
 mod boot_image;
 mod config;
@@ -87,6 +90,16 @@ impl FailureTracker {
     }
 }
 
+fn take_talk_data(receiver: &mpsc::Receiver<TalkData>, talk_data: &mut Option<TalkData>) -> bool {
+    let Ok(new_talk_data) = receiver.try_recv() else {
+        return false;
+    };
+
+    info!("📚 Talk data received: {}", new_talk_data.title);
+    *talk_data = Some(new_talk_data);
+    true
+}
+
 /// Run the main application with synchronous threading model
 ///
 /// # Errors
@@ -121,8 +134,8 @@ pub fn run(peripherals: Peripherals, sysloop: EspSystemEventLoop) -> anyhow::Res
         spi2,
         pins.gpio7,  // sclk
         pins.gpio6,  // sdo
-        pins.gpio5,  // dc
-        pins.gpio4,  // cs
+        pins.gpio5,  // cs
+        pins.gpio4,  // dc
         pins.gpio48, // reset
         &mut buffer,
     )
@@ -190,8 +203,10 @@ pub fn run(peripherals: Peripherals, sysloop: EspSystemEventLoop) -> anyhow::Res
         // Check for state diffs with dynamic timeout
         match diff_receiver.recv_timeout(timeout) {
             Ok(diff) => {
-                // Skip duplicate diffs to prevent loops (except Blink which is always processed)
-                if !matches!(diff, AppStateDiff::Blink) && last_diff.as_ref() == Some(&diff) {
+                // Blink, Reload are event, not state change
+                if !matches!(diff, AppStateDiff::Blink | AppStateDiff::TalkReload)
+                    && last_diff.as_ref() == Some(&diff)
+                {
                     continue;
                 }
 
@@ -206,13 +221,25 @@ pub fn run(peripherals: Peripherals, sysloop: EspSystemEventLoop) -> anyhow::Res
                 // StateManager logs state transitions internally
                 state_manager.apply_diff(&diff);
 
+                // Fetch the new titles
+                if matches!(diff, AppStateDiff::TalkReload) {
+                    // Not `?`: a reload that cannot even get a thread is still
+                    // only a stale talk, and taking the whole app down mid-talk
+                    // over it would be worse than the stale titles.
+                    if let Err(error) = spawn_api_thread(
+                        diff_sender.clone(),
+                        talk_data_sender.clone(),
+                        port,
+                        TalkFetch::Reload,
+                    ) {
+                        log::warn!("⚠️ Could not start the talk reload: {error:?}");
+                    }
+                }
+
                 last_diff = Some(diff);
 
                 // Check for talk data updates (non-blocking)
-                if let Ok(new_talk_data) = talk_data_receiver.try_recv() {
-                    info!("📚 Talk data received: {}", new_talk_data.title);
-                    talk_data = Some(new_talk_data);
-                }
+                take_talk_data(&talk_data_receiver, &mut talk_data);
 
                 // Update display with failure tracking
                 info!(
@@ -250,7 +277,12 @@ pub fn run(peripherals: Peripherals, sysloop: EspSystemEventLoop) -> anyhow::Res
                 // Handle state-specific actions
                 match state_manager.current_state() {
                     AppState::Connected { .. } if services.is_api_pending() => {
-                        spawn_api_thread(diff_sender.clone(), talk_data_sender.clone(), port)?;
+                        spawn_api_thread(
+                            diff_sender.clone(),
+                            talk_data_sender.clone(),
+                            port,
+                            TalkFetch::Initial,
+                        )?;
                         state_manager.transition_to(AppState::Loading);
                         services.mark_api_started();
                     }
@@ -264,6 +296,15 @@ pub fn run(peripherals: Peripherals, sysloop: EspSystemEventLoop) -> anyhow::Res
                 }
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {
+                // A reload's talk data arrives on its own channel with no diff
+                if take_talk_data(&talk_data_receiver, &mut talk_data) {
+                    if let Err(error) = display_manager
+                        .update_display(state_manager.current_state(), talk_data.as_ref())
+                    {
+                        log::error!("Failed to update display: {error:?}");
+                    }
+                }
+
                 // Update LEDs (handles blink animation and expiry internally)
                 if let Err(error) = led_controller.update(state_manager.current_state()) {
                     log::error!("Failed to update LEDs: {error:?}");

@@ -3,8 +3,12 @@
 WIFI_SSID = "xxx"
 WIFI_PASSWORD = "xxx"
 
-# GET WITH `ipconfig getifaddr en0`
-TOBOGGAN_HOST = "192.168.1.137"
+# Your machine's Bonjour name, from `mise run host` — lwIP resolves `.local`
+# over multicast mDNS, so this keeps working when the IP changes networks.
+TOBOGGAN_HOST = "xxx.local"
+# Optional: tried when the `.local` name does not resolve, for networks
+# that block multicast. Get it with `mise run ip`.
+# TOBOGGAN_HOST_FALLBACK = "192.168.1.100"
 TOBOGGAN_PORT = 8080
 
 [tools]
@@ -12,6 +16,9 @@ TOBOGGAN_PORT = 8080
 "cargo:espflash" = "latest"
 "cargo:espup" = "latest"
 "cargo:esp-generate" = "latest"
+# Wokwi simulator, see README "Simulating without hardware"
+"github:wokwi/wokwi-cli" = "latest"
+"github:wokwi/wokwigw" = "latest"
 
 [tasks.check]
 description = "Check the code compiles"
@@ -32,10 +39,42 @@ cargo clippy --fix --allow-dirty --allow-staged
 description = "Format code with rustfmt"
 run = "cargo +nightly fmt"
 
+[tasks.build]
+description = "Build the firmware for the device"
+run = "cargo build --release"
+
 [tasks.flash]
 description = "Flash the device"
+# Depends on `build`: `sim-build` writes to the same path with the simulator's
+# WiFi baked in, so flashing without rebuilding can push `Wokwi-GUEST` to the box.
+depends = ["build"]
 run = "espflash flash target/xtensa-esp32s3-espidf/release/toboggan-esp32"
+
+[tasks.host]
+description = "Return the host Bonjour name (use this as TOBOGGAN_HOST)"
+run = "echo \"$(scutil --get LocalHostName).local\""
 
 [tasks.ip]
 description = "Return the host IP"
 run = "ipconfig getifaddr en0"
+
+[tasks.sim-build]
+description = "Build the firmware for the Wokwi simulator"
+# The firmware bakes these in with `env!` at compile time, so the simulator
+# needs its own values: Wokwi's virtual network is the open `Wokwi-GUEST` AP,
+# and `host.wokwi.internal` is how the simulated board reaches this machine.
+env = { WIFI_SSID = "Wokwi-GUEST", WIFI_PASSWORD = "", TOBOGGAN_HOST = "host.wokwi.internal", TOBOGGAN_PORT = "8080" }
+run = "cargo build --release"
+
+[tasks.sim-gateway]
+description = "Run the Wokwi private gateway (makes host.wokwi.internal resolve)"
+run = "wokwigw"
+
+[tasks.sim-test]
+description = "Run the headless Wokwi boot scenario"
+depends = ["sim-build"]
+run = "mkdir -p wokwi/out && wokwi-cli . --timeout 60000 --scenario wokwi/boot.test.yaml --serial-log-file target/wokwi-serial.log"
+
+[tasks.sim-lint]
+description = "Validate diagram.json"
+run = "wokwi-cli lint"

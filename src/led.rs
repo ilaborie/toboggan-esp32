@@ -82,7 +82,6 @@ impl LedPattern {
             AppState::Loading => LedPattern::Blinking(RgbColor::WHITE, BLINK_INTERVAL_NORMAL),
             AppState::Initialized => LedPattern::Solid(RgbColor::CYAN),
             AppState::Play { mode, .. } => match mode {
-                StateMode::Paused => LedPattern::Solid(RgbColor::WHITE),
                 StateMode::Running => LedPattern::Solid(RgbColor::BLUE),
                 StateMode::Done => LedPattern::Solid(RgbColor::GREEN),
             },

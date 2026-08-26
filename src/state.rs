@@ -10,6 +10,19 @@ pub fn send_diff(sender: &mpsc::Sender<AppStateDiff>, diff: AppStateDiff, contex
     }
 }
 
+/// Flattens an [`anyhow::Error`] cause chain into one displayable line.
+///
+/// `{error}` renders only the outermost context, so a failure surfaces on screen
+/// as "load the talk" with the reason it actually failed hidden in the chain.
+/// This keeps every link, innermost cause last.
+pub fn error_chain(error: &anyhow::Error) -> String {
+    error
+        .chain()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(": ")
+}
+
 /// Creates an `AppStateDiff::Error` with format! style arguments
 ///
 /// # Examples
@@ -77,6 +90,8 @@ pub enum AppStateDiff {
     },
     /// Trigger LED blink effect (transient, doesn't change core state)
     Blink,
+    /// Need re-fetch talk
+    TalkReload,
     /// Error occurred (can happen from any state)
     Error { message: String },
 }
@@ -104,7 +119,6 @@ pub enum AppState {
 
 #[derive(Debug, Clone, Copy, PartialEq, Hash)]
 pub enum StateMode {
-    Paused,
     Running,
     Done,
 }
@@ -158,8 +172,9 @@ impl AppState {
                 other => other,
             },
             AppStateDiff::Error { message } => AppState::Error { message },
-            // Blink is transient and doesn't change the core state
-            AppStateDiff::Blink => self,
+            // Neither moves the deck: Blink is a transient LED effect, and a
+            // reload only refreshes the talk data held alongside this state.
+            AppStateDiff::Blink | AppStateDiff::TalkReload => self,
         }
     }
 }
@@ -366,7 +381,7 @@ mod tests {
         let diff = AppStateDiff::UpdateSlide {
             current: 2,
             current_step: 1,
-            mode: StateMode::Paused,
+            mode: StateMode::Done,
         };
 
         let new_state = state.apply_diff(diff);
@@ -376,7 +391,7 @@ mod tests {
             AppState::Play {
                 current: 2,
                 current_step: 1,
-                mode: StateMode::Paused,
+                mode: StateMode::Done,
             }
         );
     }

@@ -1,0 +1,42 @@
+# Headless boot check, run by `mise run sim-test`.
+#
+# wokwi-cli simulates in Wokwi's cloud, where `host.wokwi.internal` does not
+# exist — so the talk fetch failing is the expected outcome, not a broken test.
+# One run covers boot, display init, the WiFi join, and the error path.
+#
+# No `expect-pin` on the RGB LED: every state this scenario reaches is a
+# *blinking* pattern (see `LedPattern::from_state` in src/led.rs), so a pin
+# assertion would race the blink. The screenshots cover the visible state.
+#
+# Screenshot paths are relative to THIS file's directory, not the project root.
+# `save-to` keeps the actual frame in wokwi/out/ so a failed `compare-with` can
+# be inspected side by side with the golden.
+
+name: 'Boot, join WiFi, fail the talk fetch'
+version: 1
+author: 'Igor Laborie'
+
+steps:
+  - wait-serial: 'Hello - Starting synchronous ESP32 application'
+  - wait-serial: 'Display initialized'
+  - wait-serial: 'Scanning for available WiFi networks'
+  # The delays let the frame finish going out over SPI: the serial line only
+  # says the draw *started*.
+  - delay: 1000ms
+  - take-screenshot:
+      part-id: lcd
+      save-to: 'out/boot.png'
+      compare-with: 'golden/boot.png'
+
+  - wait-serial: 'WiFi connected successfully'
+
+  - wait-serial: 'Failed to load talk'
+  # Anchor on the *render*, not the network error: the fetch failing and the
+  # error screen being drawn are two different moments, and screenshotting
+  # between them catches a half-painted frame.
+  - wait-serial: 'Updating display for state: Error'
+  - delay: 2000ms
+  - take-screenshot:
+      part-id: lcd
+      save-to: 'out/error.png'
+      compare-with: 'golden/error.png'
