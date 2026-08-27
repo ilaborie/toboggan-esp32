@@ -9,8 +9,9 @@
 # assertion would race the blink. The screenshots cover the visible state.
 #
 # Screenshot paths are relative to THIS file's directory, not the project root.
-# `save-to` keeps the actual frame in wokwi/out/ so a failed `compare-with` can
-# be inspected side by side with the golden.
+# The frames are only *saved* here; `wokwi/compare.py` checks them against
+# wokwi/golden/ afterwards. wokwi-cli's own `compare-with` demands byte
+# equality, which the simulated panel does not deliver — see that script.
 
 name: 'Boot, join WiFi, fail the talk fetch'
 version: 1
@@ -26,7 +27,6 @@ steps:
   - take-screenshot:
       part-id: lcd
       save-to: 'out/boot.png'
-      compare-with: 'golden/boot.png'
 
   - wait-serial: 'WiFi connected successfully'
 
@@ -39,4 +39,3 @@ steps:
   - take-screenshot:
       part-id: lcd
       save-to: 'out/error.png'
-      compare-with: 'golden/error.png'

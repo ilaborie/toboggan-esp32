@@ -73,7 +73,11 @@ run = "wokwigw"
 [tasks.sim-test]
 description = "Run the headless Wokwi boot scenario"
 depends = ["sim-build"]
-run = "mkdir -p wokwi/out && wokwi-cli . --timeout 60000 --scenario wokwi/boot.test.yaml --serial-log-file target/wokwi-serial.log"
+run = """
+mkdir -p wokwi/out
+wokwi-cli . --timeout 60000 --scenario wokwi/boot.test.yaml --serial-log-file target/wokwi-serial.log
+python3 wokwi/compare.py
+"""
 
 [tasks.sim-lint]
 description = "Validate diagram.json"
