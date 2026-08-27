@@ -53,12 +53,17 @@ shared by the HTTP and WebSocket clients, and every attempt is logged:
 ### Build and Flash
 
 ```bash
-# Build for release
-cargo build --release
+# Build and flash (rebuilds for the device first, so a simulator build
+# can never reach the box)
+mise run flash
 
-# Flash and monitor
-cargo espflash flash --monitor --release
+# Flash and monitor by hand
+cargo espflash flash --monitor --release --partition-table partitions.csv
 ```
+
+`--partition-table` is not optional: espflash does not read `sdkconfig`, so
+without it the device gets espflash's default layout instead of the 4 MB app
+partition the build was sized against. See `partitions.csv`.
 
 ## Simulating without hardware
 
@@ -94,9 +99,19 @@ on your machine, so the run deliberately ends in the talk-fetch error path —
 covering boot, display init, the WiFi join, and error rendering in one go.
 
 The two screenshots are compared against `wokwi/golden/`, which is committed.
-Rendering is byte-deterministic, so any diff is a real change. To refresh a
-golden after an intentional display change, copy it up from `wokwi/out/` (where
-every run leaves the actual frame) and eyeball it first.
+The comparison is `wokwi/compare.py`, not wokwi-cli's own `compare-with`, and it
+allows a small budget of differing pixels (50, against a 240x320 frame).
+
+That budget is not laziness. The simulated panel is not byte-deterministic:
+upgrading to embedded-graphics 0.8.2 — a release that changed nothing but
+documentation links — moved a single pixel, and so did changing a screenshot
+delay. The artefact is in Wokwi's ILI9341 model, not in what the firmware drew.
+A real regression is never that small: one wrong character in `FONT_9X18` is up
+to 162 pixels, and a moved line or wrong colour is thousands.
+
+Every run leaves the actual frame in `wokwi/out/`. To refresh a golden after an
+intentional display change, eyeball it against the old one first, then copy it
+up.
 
 ### Live, against a local toboggan server
 
@@ -117,6 +132,9 @@ This is the only way to exercise the full WebSocket protocol — registration,
 slide updates, talk reloads — without flashing the box.
 
 ## Architecture
+
+See [docs/touch-and-imu.md](docs/touch-and-imu.md) for what the unused
+touchscreen and IMU would take — the parts, the crates, and the constraints.
 
 - **Multi-threaded**: WiFi, API, WebSocket, and main display loop
 - **State machine**: Booting → Connecting → Connected → Loading → Initialized → Play (Running/Done)
