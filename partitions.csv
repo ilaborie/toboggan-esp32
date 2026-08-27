@@ -1,0 +1,12 @@
+# Partition table for the ESP32-S3-BOX-3 (ESP32-S3-WROOM-1 N16R8, 16 MB flash).
+#
+# The built-in tables are sized for ESP-IDF's default 2 MB assumption, and the
+# largest of them (`singleapp_large`, 1500K) was already 92% full. 4 MB ends
+# that recurring squeeze with 12 MB of the module's flash still unused.
+#
+# Keep the offsets of the first two entries as the built-in tables have them,
+# so an existing board's stored WiFi calibration survives the change.
+# Name,     Type, SubType, Offset,   Size
+nvs,        data, nvs,     0x9000,   0x6000
+phy_init,   data, phy,     0xf000,   0x1000
+factory,    app,  factory, 0x10000,  0x400000

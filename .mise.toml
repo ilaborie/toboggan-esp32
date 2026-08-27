@@ -48,7 +48,9 @@ description = "Flash the device"
 # Depends on `build`: `sim-build` writes to the same path with the simulator's
 # WiFi baked in, so flashing without rebuilding can push `Wokwi-GUEST` to the box.
 depends = ["build"]
-run = "espflash flash target/xtensa-esp32s3-espidf/release/toboggan-esp32"
+# `--partition-table`: espflash does not read sdkconfig, so without this it
+# writes its own default table and the device disagrees with the build.
+run = "espflash flash --partition-table partitions.csv target/xtensa-esp32s3-espidf/release/toboggan-esp32"
 
 [tasks.host]
 description = "Return the host Bonjour name (use this as TOBOGGAN_HOST)"

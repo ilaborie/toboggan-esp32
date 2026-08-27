@@ -3,8 +3,16 @@
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=20000
 CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE=4096
 
-# Use built-in large partition table (1500K app instead of 1MB)
-CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y
+# The board is an ESP32-S3-WROOM-1 N16R8; ESP-IDF's 2MB default is not the
+# hardware, and the largest built-in table was already 92% full. See partitions.csv.
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="16MB"
+CONFIG_PARTITION_TABLE_CUSTOM=y
+# ESP-IDF resolves a relative CSV against its PROJECT_DIR, which esp-idf-sys
+# generates six levels down at target/<triple>/<profile>/build/<pkg>/out --
+# hence the climb back to the repo root. Needs revisiting only if the target
+# directory is ever moved out of the tree with CARGO_TARGET_DIR.
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="../../../../../../partitions.csv"
 
 # Use this to set FreeRTOS kernel tick frequency to 1000 Hz (100 Hz by default).
 # This allows to use 1 ms granularity for thread sleeps (10 ms by default).
