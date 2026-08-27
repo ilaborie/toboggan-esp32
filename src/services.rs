@@ -62,7 +62,7 @@ impl ServiceTracker {
 /// Spawn `WiFi` connection thread with proper error handling
 pub fn spawn_wifi_thread(
     diff_sender: mpsc::Sender<AppStateDiff>,
-    modem: Modem,
+    modem: Modem<'static>,
     sysloop: EspSystemEventLoop,
 ) -> anyhow::Result<()> {
     info!("🔄 Starting WiFi connection thread");
@@ -112,7 +112,11 @@ pub fn spawn_websocket_thread(
 
 /// `WiFi` connection thread
 #[allow(clippy::needless_pass_by_value)] // Need owned values for thread
-fn wifi_thread(diff_sender: mpsc::Sender<AppStateDiff>, modem: Modem, sysloop: EspSystemEventLoop) {
+fn wifi_thread(
+    diff_sender: mpsc::Sender<AppStateDiff>,
+    modem: Modem<'static>,
+    sysloop: EspSystemEventLoop,
+) {
     info!("📶 WiFi thread started");
 
     let wifi = match wifi_sync(WIFI_SSID, WIFI_PASSWORD, modem, sysloop) {

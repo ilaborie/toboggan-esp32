@@ -1,7 +1,7 @@
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
-use esp_idf_svc::hal::gpio::{AnyIOPin, IOPin, Output, PinDriver};
+use esp_idf_svc::hal::gpio::{Output, OutputPin, PinDriver};
 use log::info;
 
 use crate::config::led::{BLINK_INTERVAL_FAST, BLINK_INTERVAL_NORMAL};
@@ -91,9 +91,9 @@ impl LedPattern {
 }
 
 pub struct LedController {
-    red_pin: PinDriver<'static, AnyIOPin, Output>,
-    green_pin: PinDriver<'static, AnyIOPin, Output>,
-    blue_pin: PinDriver<'static, AnyIOPin, Output>,
+    red_pin: PinDriver<'static, Output>,
+    green_pin: PinDriver<'static, Output>,
+    blue_pin: PinDriver<'static, Output>,
     current_pattern: LedPattern,
     blink_override_end: Option<Instant>,
 }
@@ -104,15 +104,13 @@ impl LedController {
     /// # Errors
     /// Returns error if GPIO pin initialization fails
     pub fn new(
-        red_pin: impl IOPin + 'static,
-        green_pin: impl IOPin + 'static,
-        blue_pin: impl IOPin + 'static,
+        red_pin: impl OutputPin + 'static,
+        green_pin: impl OutputPin + 'static,
+        blue_pin: impl OutputPin + 'static,
     ) -> anyhow::Result<Self> {
-        let red_pin = PinDriver::output(red_pin.downgrade()).context("initialize red LED pin")?;
-        let green_pin =
-            PinDriver::output(green_pin.downgrade()).context("initialize green LED pin")?;
-        let blue_pin =
-            PinDriver::output(blue_pin.downgrade()).context("initialize blue LED pin")?;
+        let red_pin = PinDriver::output(red_pin).context("initialize red LED pin")?;
+        let green_pin = PinDriver::output(green_pin).context("initialize green LED pin")?;
+        let blue_pin = PinDriver::output(blue_pin).context("initialize blue LED pin")?;
 
         let mut controller = Self {
             red_pin,

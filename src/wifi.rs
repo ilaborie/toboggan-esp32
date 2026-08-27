@@ -1,7 +1,6 @@
 use anyhow::{bail, Result};
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::hal::modem::Modem;
-use esp_idf_svc::hal::peripheral;
 use esp_idf_svc::wifi::{AuthMethod, BlockingWifi, ClientConfiguration, Configuration, EspWifi};
 use log::info;
 
@@ -16,7 +15,7 @@ use log::info;
 pub fn wifi_sync(
     ssid: &str,
     password: &str,
-    modem: impl peripheral::Peripheral<P = Modem> + 'static,
+    modem: Modem<'static>,
     sysloop: EspSystemEventLoop,
 ) -> Result<Box<EspWifi<'static>>> {
     let mut auth_method = AuthMethod::WPA2Personal;
@@ -71,12 +70,14 @@ pub fn wifi_sync(
     );
 
     wifi.set_configuration(&Configuration::Client(ClientConfiguration {
-        ssid: ssid
-            .try_into()
-            .map_err(|()| anyhow::anyhow!("Failed to parse SSID '{}' into WiFi config (may be too long or contain invalid chars)", ssid))?,
-        password: password
-            .try_into()
-            .map_err(|()| anyhow::anyhow!("Failed to parse password into WiFi config (may be too long or contain invalid chars)"))?,
+        // These are fixed-capacity `heapless` strings, so length is the only
+        // way the conversion can fail.
+        ssid: ssid.try_into().map_err(|_| {
+            anyhow::anyhow!("SSID '{ssid}' is longer than the 32 bytes WiFi allows")
+        })?,
+        password: password.try_into().map_err(|_| {
+            anyhow::anyhow!("WiFi password is longer than the 64 bytes WiFi allows")
+        })?,
         channel,
         auth_method,
         ..Default::default()

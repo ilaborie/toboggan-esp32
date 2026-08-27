@@ -24,16 +24,16 @@ const HEIGHT: u16 = 240;
 /// # Errors
 /// Returns error if SPI device creation fails, GPIO pin configuration fails,
 /// or display initialization fails
-pub fn display(
-    spi2: SPI2,
-    sclk: Gpio7,
-    sdo: Gpio6, // aka miso
-    cs: Gpio5,
-    dc: Gpio4,
-    reset: Gpio48,
+pub fn display<'a>(
+    spi2: SPI2<'static>,
+    sclk: Gpio7<'static>,
+    sdo: Gpio6<'static>, // aka miso
+    cs: Gpio5<'static>,
+    dc: Gpio4<'static>,
+    reset: Gpio48<'static>,
     // blacklight: Gpio47,
-    buffer: &mut [u8],
-) -> anyhow::Result<impl DrawTarget<Color = Rgb565, Error = impl Debug> + use<'_>> {
+    buffer: &'a mut [u8],
+) -> anyhow::Result<impl DrawTarget<Color = Rgb565, Error = impl Debug> + use<'a>> {
     let config = Config {
         baudrate: MegaHertz::from(40).into(),
         data_mode: MODE_0,
@@ -42,11 +42,11 @@ pub fn display(
 
     let bus_config = SpiDriverConfig::new();
 
-    let spi_device = SpiDeviceDriver::new_single::<SPI2>(
+    let spi_device = SpiDeviceDriver::new_single(
         spi2,
-        sclk,                // sclk: serial clock
-        sdo,                 // sdo: serial data output / MISO
-        None::<AnyInputPin>, //Some(mosi), // sdi: serial data input / MOSI
+        sclk,                         // sclk: serial clock
+        sdo,                          // sdo: serial data output / MISO
+        None::<AnyInputPin<'static>>, //Some(mosi), // sdi: serial data input / MOSI
         // None::<AnyOutputPin>, //Some(cs),   // cs: chip select
         Some(cs),
         &bus_config,

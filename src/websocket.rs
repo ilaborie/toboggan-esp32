@@ -256,7 +256,7 @@ fn send_unregister(client: &mut EspWebSocketClient, client_id: Option<ClientId>)
 }
 
 fn handle_event(
-    producer: &mut Producer<'_, WsMessage, MESSAGE_QUEUE_SIZE>,
+    producer: &mut Producer<'_, WsMessage>,
     event: &Result<WebSocketEvent, EspIOError>,
 ) {
     let event = match event {
@@ -368,7 +368,7 @@ fn slide_update(state: InnerState) -> Option<WsMessage> {
 }
 
 /// Hands one message to the main loop. Lock-free; a full queue drops it.
-fn enqueue(producer: &mut Producer<'_, WsMessage, MESSAGE_QUEUE_SIZE>, msg: WsMessage) {
+fn enqueue(producer: &mut Producer<'_, WsMessage>, msg: WsMessage) {
     if producer.enqueue(msg).is_err() {
         warn!("WebSocket queue full, dropping message");
     }

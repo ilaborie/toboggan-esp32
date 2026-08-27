@@ -1,6 +1,6 @@
 use anyhow::Context;
 use esp_idf_svc::eventloop::EspSystemEventLoop;
-use esp_idf_svc::hal::prelude::Peripherals;
+use esp_idf_svc::hal::peripherals::Peripherals;
 use esp_idf_svc::nvs::EspDefaultNvsPartition;
 
 fn main() -> anyhow::Result<()> {
