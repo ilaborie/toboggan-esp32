@@ -1,7 +1,9 @@
 # Touchscreen and gyroscope: what it would take
 
-Written while upgrading to `esp-idf-svc` 0.52. Nothing here is implemented —
-this records what was established so the work does not start from zero.
+Written while upgrading to `esp-idf-svc` 0.52, and updated as the touchscreen
+landed. Touch is implemented (`src/touch.rs`, tap advances a step); the IMU is
+not, and this records what was established so that work does not start from
+zero.
 
 ## Did the upgrade unlock either of them?
 
@@ -63,15 +65,29 @@ pub const DEVICE_IDS: [u8; 2] = [
 So it accepts this exact part off the shelf — accelerometer, gyroscope and
 temperature. It *owns* its I2C handle.
 
-### Touch — one measurement outstanding
+### The bus, as measured
+
+The firmware now scans the bus at boot (`src/touch.rs`). On this board:
+
+```
+👆 I2C scan found 0x14 (GT911 touch), 0x18 (ES8311 codec),
+                  0x40 (ES7210 ADC), 0x68 (ICM-42607 IMU)
+👆 GT911 ready at 0x14
+```
+
+So it is the **GT911**, as predicted — but at **0x14**, the backup address, not
+the 0x5D that the `gt911` crate defaults to. The controller latches its address
+from the INT pin level at reset and its reset line is shared with the LCD's, so
+trying both addresses is not optional. The IMU is confirmed present at 0x68.
+
+### Touch — the older uncertainty, now resolved
 
 The BSP probes the bus at runtime and handles two possibilities, pairing each
 with a different LCD driver: **GT911** (0x5D/0x14) implies ILI9341, **TT21100**
-(0x24) implies ST7789. This firmware drives an `ILI9342CRgb565` successfully, so
-the board is almost certainly the GT911 variant — but an I2C scan settles it in
-a minute and should be step one.
+(0x24) implies ST7789. The scan above settles it.
 
-Rust support differs sharply between the two:
+Rust support differs sharply between the two (the GT911 is what this board has,
+so the second entry is recorded only for other revisions):
 
 - [`gt911`](https://crates.io/crates/gt911) 0.3 — current, `embedded-hal` 1.0,
   and it *borrows* the bus per call (`get_touch(&mut i2c) -> Option<Point>`),
@@ -103,19 +119,24 @@ and a plain `borrow_mut()` for the touch controller covers both from one thread.
    names the event-like diffs explicitly (`Blink | TalkReload`); a repeated tap
    would be swallowed unless it joins that list.
 
-4. **Tap-to-advance is a protocol problem, not a driver problem.** This
-   firmware is genuinely watch-only: the only frames it sends are `Register`
-   and `Unregister`. Sending `NextSlide` needs
+4. **Tap-to-advance was a protocol problem, not a driver problem.** Now done,
+   and it needed all of this:
 
-   - a command channel threaded from `run()` through `spawn_websocket_thread`
-     into `connect_to_ws`, surviving the reconnect loop in `src/services.rs`; and
-   - a **presenter token** in the `Register` frame. Without one the server
-     answers `Error`, and the websocket handler currently turns any `Error`
-     notification into a full-screen `AppState::Error` — so a refused command
-     would take down the UI.
-
-   Touch actions that need no token (toggle the backlight, force a talk reload,
-   cycle a view) are far cheaper to land first.
+   - a command channel from `touch_thread` through `spawn_websocket_thread`
+     into `connect_to_ws`, borrowed rather than moved so it survives the
+     reconnect loop, and drained on connect — taps made against a dead socket
+     would otherwise all replay at once;
+   - a **presenter token** in the `Register` frame. The server settles the role
+     once, at registration, from the token in that frame — *not* from the
+     `?token=` query parameter, which is the HTTP path. No token configured
+     **server-side** also means Audience, whatever the client offers;
+   - press-edge detection. At 50 Hz a resting finger reads as a press on every
+     poll, so firing on the press rather than the edge sends ~50 commands;
+   - and a fix to `Error` handling. The server answers a refused command with
+     `"This client is watching, not presenting"` and carries on; the handler
+     used to turn any `Error` into a full-screen `AppState::Error`, which would
+     have blanked the deck mid-talk on every disallowed tap. It now only does
+     that before registration, where no benign case exists.
 
 5. **Neither part is simulable.** Wokwi has no GT911 or ICM-42607 model, so
    `mise run sim-test` can only ever show that their absence degrades

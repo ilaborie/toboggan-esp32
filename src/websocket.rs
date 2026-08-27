@@ -13,6 +13,7 @@ use heapless::spsc::{Producer, Queue};
 use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 
+use crate::config::env::TOBOGGAN_PRESENTER_TOKEN;
 use crate::config::websocket::{CONNECTION_TIMEOUT, MESSAGE_QUEUE_SIZE, POLL_INTERVAL};
 use crate::{error_diff, AppStateDiff, StateMode};
 
@@ -21,9 +22,43 @@ use crate::{error_diff, AppStateDiff, StateMode};
 /// A `slotmap` key on the server, so it crosses the wire as an object rather
 /// than a string — and has to go back the same way in `Unregister`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-struct ClientId {
+pub struct ClientId {
     idx: u32,
     version: u32,
+}
+
+/// The commands this client sends.
+///
+/// Mirrors `toboggan_core::Command`, which is `#[serde(tag = "command")]` - only
+/// the variants this firmware actually uses. Serialized rather than written out
+/// by hand so the shape lives in one place; the old string literals were a
+/// second copy of the protocol waiting to drift.
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "command")]
+pub enum Command {
+    /// Join the presentation. Must be the first frame sent.
+    Register {
+        name: &'static str,
+        /// Omitted entirely when absent, matching the server's
+        /// `skip_serializing_if`, so an untokened box registers exactly as it
+        /// did before this existed.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        token: Option<&'static str>,
+    },
+    /// Leave cleanly, so the server drops our slot rather than timing it out.
+    Unregister { client: ClientId },
+    /// Advance one step within the current slide.
+    NextStep,
+}
+
+/// Serializes one command and writes it to the socket.
+fn send(client: &mut EspWebSocketClient, command: &Command) -> anyhow::Result<()> {
+    let frame = serde_json::to_string(command).context("serialize command")?;
+    info!("🦋 WS - sending {frame}");
+    client
+        .send(FrameType::Text(false), frame.as_bytes())
+        .context("send command")?;
+    Ok(())
 }
 
 /// The PEM-encoded ISRG Root X1 certificate at the end of the cert chain
@@ -125,7 +160,11 @@ enum InnerState {
 ///
 /// # Errors
 /// Returns error if WebSocket connection fails, registration fails, or message parsing fails
-pub fn connect_to_ws(address: SocketAddr, tx: &mpsc::Sender<AppStateDiff>) -> anyhow::Result<()> {
+pub fn connect_to_ws(
+    address: SocketAddr,
+    tx: &mpsc::Sender<AppStateDiff>,
+    commands: &mpsc::Receiver<Command>,
+) -> anyhow::Result<()> {
     let uri = format!("ws://{address}/api/ws");
     info!("🦋 WS using URI {uri}");
 
@@ -171,15 +210,39 @@ pub fn connect_to_ws(address: SocketAddr, tx: &mpsc::Sender<AppStateDiff>) -> an
     info!("🦋 WS connnected");
 
     // Register client
-    let message = r#"{"command":"Register","name":"ESP32"}"#;
-    info!("Websocket send, text: {message}");
-    client.send(FrameType::Text(false), message.as_bytes())?;
+    send(
+        &mut client,
+        &Command::Register {
+            name: "ESP32",
+            token: TOBOGGAN_PRESENTER_TOKEN,
+        },
+    )?;
+
+    // Anything tapped while the socket was down is stale. Replaying it now
+    // would jump the deck by however many times the screen was prodded while
+    // it was not listening.
+    let mut dropped = 0_usize;
+    while commands.try_recv().is_ok() {
+        dropped += 1;
+    }
+    if dropped > 0 {
+        info!("🦋 WS - dropped {dropped} command(s) queued while disconnected");
+    }
 
     // Track client_id for clean unregistration
     let mut client_id: Option<ClientId> = None;
 
     // Main message processing loop
     loop {
+        // Drained before the inbound check: the `continue` below runs on almost
+        // every pass, so anything after it would only be reached when a message
+        // happened to be waiting.
+        while let Ok(command) = commands.try_recv() {
+            if let Err(error) = send(&mut client, &command) {
+                warn!("🦋 WS - could not send {command:?}: {error}");
+            }
+        }
+
         let Some(msg) = ws_consumer.dequeue() else {
             // No message available, sleep briefly to avoid busy waiting
             std::thread::sleep(Duration::from_millis(10));
@@ -198,6 +261,13 @@ pub fn connect_to_ws(address: SocketAddr, tx: &mpsc::Sender<AppStateDiff>) -> an
             } => {
                 let role = role.as_deref().unwrap_or("unknown");
                 info!("🦋 WS - registered as {role} with client_id {id:?}");
+                if role != "Presenter" {
+                    warn!(
+                        "🦋 WS - registered as {role}, so taps cannot move the deck. \
+                         Set TOBOGGAN_PRESENTER_TOKEN and start the server with \
+                         --presenter-token to match."
+                    );
+                }
                 client_id = Some(id);
                 continue;
             }
@@ -218,6 +288,15 @@ pub fn connect_to_ws(address: SocketAddr, tx: &mpsc::Sender<AppStateDiff>) -> an
             WsMessage::Blink => AppStateDiff::Blink,
             WsMessage::TalkChanged => AppStateDiff::TalkReload,
             WsMessage::Error { message } => {
+                // Once registered, this is very likely a refused command - the
+                // server answers "This client is watching, not presenting" and
+                // carries on. Taking the whole screen for that would blank the
+                // deck mid-talk every time a tap was not allowed. Before
+                // registration there is no such benign case, so it still shows.
+                if client_id.is_some() {
+                    warn!("🦋 WS - server refused: {message}");
+                    continue;
+                }
                 info!("🦋 WS - error {message}");
                 error_diff!("{message}")
             }
@@ -239,19 +318,8 @@ fn send_unregister(client: &mut EspWebSocketClient, client_id: Option<ClientId>)
         debug!("No client_id to unregister");
         return;
     };
-    // Serialized rather than formatted by hand: the id is an object, and
-    // spelling its shape out here is a second place for it to drift.
-    let field = match serde_json::to_string(&id) {
-        Ok(field) => field,
-        Err(error) => {
-            warn!("Failed to serialize client_id: {error}");
-            return;
-        }
-    };
-    let msg = format!(r#"{{"command":"Unregister","client":{field}}}"#);
-    info!("🦋 WS - sending unregister: {msg}");
-    if let Err(e) = client.send(FrameType::Text(false), msg.as_bytes()) {
-        warn!("Failed to send Unregister: {e}");
+    if let Err(error) = send(client, &Command::Unregister { client: id }) {
+        warn!("Failed to send Unregister: {error}");
     }
 }
 

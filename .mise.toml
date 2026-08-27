@@ -10,6 +10,10 @@ TOBOGGAN_HOST = "xxx.local"
 # that block multicast. Get it with `mise run ip`.
 # TOBOGGAN_HOST_FALLBACK = "192.168.1.100"
 TOBOGGAN_PORT = 8080
+# Required for tap-to-advance. The server grants Presenter to loopback clients
+# only, so this box needs a token to move the deck. Put the real value in
+# .mise.local.toml and start the server with the matching --presenter-token.
+# TOBOGGAN_PRESENTER_TOKEN = "choose-a-shared-secret"
 
 [tools]
 "cargo:ldproxy" = "latest"
@@ -51,6 +55,10 @@ depends = ["build"]
 # `--partition-table`: espflash does not read sdkconfig, so without this it
 # writes its own default table and the device disagrees with the build.
 run = "espflash flash --partition-table partitions.csv target/xtensa-esp32s3-espidf/release/toboggan-esp32"
+
+[tasks.monitor]
+description = "Watch the device serial output"
+run = "espflash monitor --elf target/xtensa-esp32s3-espidf/release/toboggan-esp32"
 
 [tasks.host]
 description = "Return the host Bonjour name (use this as TOBOGGAN_HOST)"

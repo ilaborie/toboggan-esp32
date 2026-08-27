@@ -759,6 +759,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "gt911"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "65a60a0e3e4a85a5a309b6c012a491730d51e0210f56b70acfc7d912a163b060"
+dependencies = [
+ "embedded-hal 1.0.0",
+ "embedded-hal-async",
+ "heapless 0.8.0",
+]
+
+[[package]]
 name = "hash32"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1420,6 +1431,7 @@ dependencies = [
  "embedded-svc",
  "embuild",
  "esp-idf-svc",
+ "gt911",
  "heapless 0.9.3",
  "log",
  "mipidsi",

@@ -23,7 +23,9 @@ use tinybmp::Bmp;
 use crate::config::display::{BOOT_IMAGE_AREA_HEIGHT, BUFFER_SIZE};
 use crate::config::env::WIFI_SSID;
 use crate::config::timing::MAIN_LOOP_POLL_INTERVAL;
-use crate::services::{spawn_api_thread, spawn_websocket_thread, spawn_wifi_thread};
+use crate::services::{
+    spawn_api_thread, spawn_touch_thread, spawn_websocket_thread, spawn_wifi_thread,
+};
 
 mod wifi;
 pub use self::wifi::*;
@@ -39,6 +41,8 @@ pub use self::websocket::*;
 
 mod display;
 pub use self::display::*;
+
+mod touch;
 
 mod state;
 pub use self::state::*;
@@ -116,7 +120,11 @@ pub fn run(peripherals: Peripherals, sysloop: EspSystemEventLoop) -> anyhow::Res
         .context("Expected a numeric port")?;
 
     let Peripherals {
-        pins, spi2, modem, ..
+        pins,
+        spi2,
+        modem,
+        i2c0,
+        ..
     } = peripherals;
 
     // Create state diff channel for efficient updates
@@ -124,6 +132,11 @@ pub fn run(peripherals: Peripherals, sysloop: EspSystemEventLoop) -> anyhow::Res
 
     // Create talk data channel
     let (talk_data_sender, talk_data_receiver) = mpsc::channel::<TalkData>();
+
+    // Touch -> WebSocket. Held in an Option because the WebSocket thread is not
+    // spawned until the talk has loaded, while the touch thread starts at boot.
+    let (command_sender, command_receiver) = mpsc::channel::<Command>();
+    let mut command_receiver = Some(command_receiver);
 
     // Initialize state manager with diff channel (starts in Booting state by default)
     let mut state_manager = StateManager::new(diff_sender.clone());
@@ -180,6 +193,13 @@ pub fn run(peripherals: Peripherals, sysloop: EspSystemEventLoop) -> anyhow::Res
     }
 
     info!("🚀 Starting main application loop");
+
+    // After the display: the panel reset on GPIO48 is shared with the touch
+    // controller, so bringing the display up resets it and re-latches its
+    // I2C address. Not `?`: a box without touch still shows the talk.
+    if let Err(error) = spawn_touch_thread(command_sender, i2c0, pins.gpio8, pins.gpio18) {
+        log::warn!("⚠️ Could not start touch input: {error:?}");
+    }
 
     // Start WiFi connection immediately since we're in Booting state
     spawn_wifi_thread(diff_sender.clone(), modem, sysloop)?;
@@ -289,8 +309,12 @@ pub fn run(peripherals: Peripherals, sysloop: EspSystemEventLoop) -> anyhow::Res
                     AppState::Initialized
                         if services.is_websocket_pending() && talk_data.is_some() =>
                     {
-                        spawn_websocket_thread(diff_sender.clone(), port)?;
-                        services.mark_websocket_started();
+                        // `take` is safe: `mark_websocket_started` means this
+                        // arm runs exactly once.
+                        if let Some(commands) = command_receiver.take() {
+                            spawn_websocket_thread(diff_sender.clone(), port, commands)?;
+                            services.mark_websocket_started();
+                        }
                     }
                     _ => {} // Other states don't trigger new threads
                 }

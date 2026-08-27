@@ -10,6 +10,7 @@ fn main() {
         "TOBOGGAN_HOST",
         "TOBOGGAN_HOST_FALLBACK",
         "TOBOGGAN_PORT",
+        "TOBOGGAN_PRESENTER_TOKEN",
     ] {
         println!("cargo:rerun-if-env-changed={var}");
     }

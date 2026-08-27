@@ -14,8 +14,7 @@ use mipidsi::models::ILI9342CRgb565;
 use mipidsi::options::{ColorOrder, Orientation};
 use mipidsi::Builder;
 
-const WIDTH: u16 = 320;
-const HEIGHT: u16 = 240;
+use crate::config::display::{SCREEN_HEIGHT, SCREEN_WIDTH};
 
 // https://docs.espressif.com/projects/esp-idf/en/release-v5.5/esp32s3/api-reference/peripherals/gpio.html
 
@@ -73,7 +72,7 @@ pub fn display<'a>(
         .reset_pin(rst)
         .color_order(ColorOrder::Bgr)
         .orientation(Orientation::new().flip_horizontal().flip_vertical())
-        .display_size(WIDTH, HEIGHT)
+        .display_size(SCREEN_WIDTH, SCREEN_HEIGHT)
         .init(&mut delay)
         .map_err(|err| anyhow::anyhow!("init display: {err:#?}"))?;
 

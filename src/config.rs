@@ -12,6 +12,16 @@ pub mod env {
     /// Tried when `TOBOGGAN_HOST` does not resolve, so an mDNS `.local` name can
     /// fall back to a literal address on a network that blocks multicast.
     pub const TOBOGGAN_HOST_FALLBACK: Option<&str> = option_env!("TOBOGGAN_HOST_FALLBACK");
+
+    /// Offered in the `Register` frame to ask for the Presenter role.
+    ///
+    /// The server grants Presenter to loopback clients only; this box is on the
+    /// LAN, so without a matching token it registers as Audience and every
+    /// command it sends is refused. Start the server with `--presenter-token`.
+    ///
+    /// Baked into the binary by `env!`, exactly like `WIFI_PASSWORD` — readable
+    /// with `strings` on the firmware image.
+    pub const TOBOGGAN_PRESENTER_TOKEN: Option<&str> = option_env!("TOBOGGAN_PRESENTER_TOKEN");
 }
 
 /// LED Configuration
@@ -24,6 +34,11 @@ pub mod led {
 /// Display Configuration
 pub mod display {
     use super::Rgb565;
+
+    /// Panel size in pixels. Lives here rather than in `display.rs` because the
+    /// touchscreen has to map its coordinates onto the same frame.
+    pub const SCREEN_WIDTH: u16 = 320;
+    pub const SCREEN_HEIGHT: u16 = 240;
 
     /// Text rendering constants for FONT_9X18
     /// Font dimensions: 9 pixels wide, 18 pixels tall
@@ -71,6 +86,32 @@ pub mod display {
     pub const COLOR_ERROR_BACKGROUND: Rgb565 = Rgb565::new(0x10, 0x00, 0x00);
 }
 
+/// Touchscreen Configuration
+pub mod touch {
+    use std::time::Duration;
+
+    /// The GT911 tops out at 400 kHz, and the I2C driver's own default is 1 MHz,
+    /// so this has to be set rather than left alone.
+    pub const I2C_BAUDRATE_KHZ: u32 = 400;
+
+    /// 50 Hz. A tap lasts well under the main loop's 100 ms poll, which is why
+    /// touch gets its own thread rather than riding along there.
+    pub const POLL_INTERVAL: Duration = Duration::from_millis(20);
+
+    /// Kept short: on a bus with nothing attached (the simulator) every one of
+    /// the ~112 probes has to time out before the scan can report.
+    pub const PROBE_TIMEOUT: Duration = Duration::from_millis(20);
+
+    /// The controller latches its address from the INT pin level at reset, so
+    /// which of the two it answers on is not knowable ahead of time.
+    pub const GT911_ADDRESSES: [u8; 2] = [0x5D, 0x14];
+
+    /// Ignore a second tap this soon after the last one. Presses are detected on
+    /// the press edge, so this only guards against contact bounce - but skipping
+    /// two steps mid-talk is not a mistake worth risking to save a constant.
+    pub const COMMAND_DEBOUNCE: Duration = Duration::from_millis(300);
+}
+
 /// Timing Configuration
 pub mod timing {
     use std::time::Duration;
@@ -99,6 +140,8 @@ pub mod threading {
     pub const WIFI_THREAD_STACK: usize = 32 * 1024;
     pub const API_THREAD_STACK: usize = 32 * 1024;
     pub const WEBSOCKET_THREAD_STACK: usize = 16 * 1024;
+    /// Smaller than the rest: this one only polls I2C and logs.
+    pub const TOUCH_THREAD_STACK: usize = 8 * 1024;
 }
 
 /// WebSocket Configuration

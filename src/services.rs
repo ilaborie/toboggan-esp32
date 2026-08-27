@@ -7,18 +7,24 @@
 
 use std::sync::mpsc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use esp_idf_svc::eventloop::EspSystemEventLoop;
+use esp_idf_svc::hal::gpio::{Gpio18, Gpio8};
+use esp_idf_svc::hal::i2c::config::Config as I2cConfig;
+use esp_idf_svc::hal::i2c::{I2cDriver, I2C0};
 use esp_idf_svc::hal::modem::Modem;
-use log::{error, info};
+use esp_idf_svc::hal::units::KiloHertz;
+use log::{error, info, warn};
 
 use crate::config::env::{WIFI_PASSWORD, WIFI_SSID};
 use crate::config::reconnect::{INITIAL_DELAY, MAX_DELAY};
 use crate::config::threading;
+use crate::config::touch::{COMMAND_DEBOUNCE, I2C_BAUDRATE_KHZ, POLL_INTERVAL};
 use crate::state::{error_chain, send_diff, AppState, AppStateDiff, TalkData};
-use crate::{connect_to_ws, error_diff, server_addr, wifi_sync, Api};
+use crate::touch::{find_touch, log_touch, scan_bus};
+use crate::{connect_to_ws, error_diff, server_addr, wifi_sync, Api, Command};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TalkFetch {
@@ -98,16 +104,106 @@ pub fn spawn_api_thread(
 pub fn spawn_websocket_thread(
     diff_sender: mpsc::Sender<AppStateDiff>,
     port: u16,
+    commands: mpsc::Receiver<Command>,
 ) -> anyhow::Result<()> {
     info!("🔌 Starting WebSocket connection");
     thread::Builder::new()
         .name("websocket_thread".to_string())
         .stack_size(threading::WEBSOCKET_THREAD_STACK)
         .spawn(move || {
-            websocket_thread(diff_sender, port);
+            websocket_thread(diff_sender, port, &commands);
         })
         .context("Failed to spawn WebSocket thread")?;
     Ok(())
+}
+
+/// Hands one command to the WebSocket thread, logging a dead channel.
+fn send_command(commands: &mpsc::Sender<Command>, command: Command) {
+    info!("👆 Tap -> {command:?}");
+    if let Err(error) = commands.send(command) {
+        error!("Failed to send command: {error}");
+    }
+}
+
+/// Spawn the touchscreen polling thread
+///
+/// # Errors
+/// Returns error if the thread cannot be spawned
+pub fn spawn_touch_thread(
+    commands: mpsc::Sender<Command>,
+    i2c: I2C0<'static>,
+    sda: Gpio8<'static>,
+    scl: Gpio18<'static>,
+) -> anyhow::Result<()> {
+    info!("👆 Starting touch thread");
+    thread::Builder::new()
+        .name("touch_thread".to_string())
+        .stack_size(threading::TOUCH_THREAD_STACK)
+        .spawn(move || {
+            touch_thread(&commands, i2c, sda, scl);
+        })
+        .context("Failed to spawn touch thread")?;
+    Ok(())
+}
+
+/// Touchscreen thread
+///
+/// Reports failures to the log only, never as an `AppStateDiff::Error`: a box
+/// with no touchscreen still shows the talk perfectly well, and the simulator
+/// has no touch controller at all.
+#[allow(clippy::needless_pass_by_value)] // Need owned values for thread
+fn touch_thread(
+    commands: &mpsc::Sender<Command>,
+    i2c: I2C0<'static>,
+    sda: Gpio8<'static>,
+    scl: Gpio18<'static>,
+) {
+    let config = I2cConfig::new().baudrate(KiloHertz::from(I2C_BAUDRATE_KHZ).into());
+    let mut i2c = match I2cDriver::new(i2c, sda, scl, &config) {
+        Ok(driver) => driver,
+        Err(error) => {
+            warn!("👆 Could not open the I2C bus: {error}");
+            return;
+        }
+    };
+
+    scan_bus(&mut i2c);
+
+    let Some(controller) = find_touch(&mut i2c) else {
+        // Nothing to retry against: the controller is soldered on, so if it did
+        // not answer the scan it is not going to appear later.
+        warn!("👆 No touch controller found, touch input disabled");
+        return;
+    };
+
+    // A finger resting on the glass reads as a press on every poll, so the
+    // command fires on the press *edge* rather than on the press.
+    let mut touching = false;
+    let mut last_command: Option<Instant> = None;
+
+    loop {
+        match controller.get_touch(&mut i2c) {
+            // A press or a move.
+            Ok(Some(point)) => {
+                if !touching {
+                    touching = true;
+                    log_touch(&point);
+                    let now = Instant::now();
+                    if last_command.is_none_or(|at| now.duration_since(at) >= COMMAND_DEBOUNCE) {
+                        last_command = Some(now);
+                        send_command(commands, Command::NextStep);
+                    }
+                }
+            }
+            // A release. `NotReady` means nothing changed since the last poll,
+            // which at 50 Hz is most of them - and crucially is *not* a release,
+            // so it must leave `touching` alone.
+            Ok(None) => touching = false,
+            Err(gt911::Error::NotReady) => {}
+            Err(error) => warn!("👆 Touch read failed: {error:?}"),
+        }
+        thread::sleep(POLL_INTERVAL);
+    }
 }
 
 /// `WiFi` connection thread
@@ -211,7 +307,11 @@ fn load_talk(talk_data_sender: &mpsc::Sender<TalkData>, base_url: String) -> any
 
 /// WebSocket connection thread with automatic reconnection
 #[allow(clippy::needless_pass_by_value)] // Need owned values for thread
-fn websocket_thread(diff_sender: mpsc::Sender<AppStateDiff>, port: u16) {
+fn websocket_thread(
+    diff_sender: mpsc::Sender<AppStateDiff>,
+    port: u16,
+    commands: &mpsc::Receiver<Command>,
+) {
     info!("🔌 WebSocket thread started");
 
     let mut delay = INITIAL_DELAY;
@@ -219,7 +319,7 @@ fn websocket_thread(diff_sender: mpsc::Sender<AppStateDiff>, port: u16) {
     loop {
         // Already resolved by the API thread, which must succeed before this one
         // is ever spawned, so this is a cache hit rather than a second lookup.
-        match server_addr(port).and_then(|address| connect_to_ws(address, &diff_sender)) {
+        match server_addr(port).and_then(|address| connect_to_ws(address, &diff_sender, commands)) {
             Ok(()) => {
                 // Connection closed gracefully, reset delay for next attempt
                 info!("🔌 WebSocket connection closed, will reconnect");
