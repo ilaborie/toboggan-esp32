@@ -23,7 +23,7 @@ use crate::config::reconnect::{INITIAL_DELAY, MAX_DELAY};
 use crate::config::threading;
 use crate::config::touch::{COMMAND_DEBOUNCE, I2C_BAUDRATE_KHZ, POLL_INTERVAL};
 use crate::state::{error_chain, send_diff, AppState, AppStateDiff, TalkData};
-use crate::touch::{find_touch, log_touch, scan_bus};
+use crate::touch::{find_touch, log_touch, scan_bus, zone, Zone};
 use crate::{connect_to_ws, error_diff, server_addr, wifi_sync, Api, Command};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -191,7 +191,13 @@ fn touch_thread(
                     let now = Instant::now();
                     if last_command.is_none_or(|at| now.duration_since(at) >= COMMAND_DEBOUNCE) {
                         last_command = Some(now);
-                        send_command(commands, Command::NextStep);
+                        send_command(
+                            commands,
+                            match zone(&point) {
+                                Zone::Left => Command::PreviousStep,
+                                Zone::Right => Command::NextStep,
+                            },
+                        );
                     }
                 }
             }

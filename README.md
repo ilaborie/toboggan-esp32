@@ -36,9 +36,10 @@ TOBOGGAN_PORT = "8080"
 TOBOGGAN_PRESENTER_TOKEN = "a-shared-secret" # optional, needed to tap-to-advance
 ```
 
-### Tapping the screen to advance
+### Tapping the screen to navigate
 
-Touching the screen sends `NextStep`. That is a privileged command: the server
+Touching the **right** half of the screen sends `NextStep`, the **left** half
+`PreviousStep`. Those are privileged commands: the server
 grants the Presenter role to clients on its own machine, and this box is on the
 network, so it has to offer a token to earn it.
 
@@ -54,7 +55,8 @@ The token is baked into the firmware by `env!`, like `WIFI_PASSWORD`, so it is
 readable with `strings` on the image. Use a secret you are happy putting there.
 
 The tap fires on the press, not on release, and is debounced — a finger resting
-on the glass advances one step, not one per poll.
+on the glass moves one step, not one per poll. The split is down the middle with
+no dead band, because a tap that does nothing reads as a broken screen.
 
 Prefer your machine's Bonjour name (`mise run host`) over a literal address: the
 box resolves `.local` over multicast mDNS, so the same firmware keeps working

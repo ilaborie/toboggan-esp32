@@ -89,11 +89,41 @@ pub fn to_screen(point: &Point) -> (u16, u16) {
     (x, y)
 }
 
+/// Which half of the screen a touch landed in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Zone {
+    Left,
+    Right,
+}
+
+/// Splits the screen down the middle.
+///
+/// Decided on the *drawn* coordinate rather than the raw one, so if the
+/// horizontal mapping in [`to_screen`] is ever corrected the zones follow it
+/// instead of silently inverting.
+///
+/// No dead band in the centre: a tap that does nothing reads as a broken
+/// screen and invites a harder second tap, which is worse during a talk than
+/// stepping the wrong way once.
+#[must_use]
+pub fn zone(point: &Point) -> Zone {
+    let (x, _) = to_screen(point);
+    if x < SCREEN_WIDTH / 2 {
+        Zone::Left
+    } else {
+        Zone::Right
+    }
+}
+
 /// Reports one touch.
 pub fn log_touch(point: &Point) {
     let (x, y) = to_screen(point);
     info!(
-        "👆 Touch raw=({}, {}) screen=({x}, {y}) id={} area={}",
-        point.x, point.y, point.track_id, point.area
+        "👆 Touch raw=({}, {}) screen=({x}, {y}) {:?} id={} area={}",
+        point.x,
+        point.y,
+        zone(point),
+        point.track_id,
+        point.area
     );
 }

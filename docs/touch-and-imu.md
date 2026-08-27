@@ -119,8 +119,8 @@ and a plain `borrow_mut()` for the touch controller covers both from one thread.
    names the event-like diffs explicitly (`Blink | TalkReload`); a repeated tap
    would be swallowed unless it joins that list.
 
-4. **Tap-to-advance was a protocol problem, not a driver problem.** Now done,
-   and it needed all of this:
+4. **Tap-to-navigate was a protocol problem, not a driver problem.** Now done —
+   right half steps forward, left half back — and it needed all of this:
 
    - a command channel from `touch_thread` through `spawn_websocket_thread`
      into `connect_to_ws`, borrowed rather than moved so it survives the

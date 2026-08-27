@@ -49,6 +49,8 @@ pub enum Command {
     Unregister { client: ClientId },
     /// Advance one step within the current slide.
     NextStep,
+    /// Go back one step within the current slide.
+    PreviousStep,
 }
 
 /// Serializes one command and writes it to the socket.
