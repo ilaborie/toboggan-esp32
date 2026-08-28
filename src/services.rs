@@ -22,7 +22,7 @@ use crate::config::env::{WIFI_PASSWORD, WIFI_SSID};
 use crate::config::reconnect::{INITIAL_DELAY, MAX_DELAY};
 use crate::config::threading;
 use crate::config::touch::{COMMAND_DEBOUNCE, I2C_BAUDRATE_KHZ, POLL_INTERVAL};
-use crate::state::{error_chain, send_diff, AppState, AppStateDiff, TalkData};
+use crate::state::{bounded, error_chain, send_diff, AppState, AppStateDiff, TalkData};
 use crate::touch::{find_touch, log_touch, scan_bus, zone, Zone};
 use crate::{connect_to_ws, error_diff, server_addr, wifi_sync, Api, Command};
 
@@ -238,7 +238,7 @@ fn wifi_thread(
     send_diff(
         &diff_sender,
         AppStateDiff::Transition(AppState::Connected {
-            ssid: WIFI_SSID.to_string(),
+            ssid: bounded(WIFI_SSID),
         }),
         "Connected",
     );
@@ -300,7 +300,7 @@ fn load_talk(talk_data_sender: &mpsc::Sender<TalkData>, base_url: String) -> any
     let talk_data = api.talk()?;
     info!(
         "📚 Talk loaded: title='{}', slides: {}",
-        talk_data.title,
+        talk_data.title(),
         talk_data.slide_count()
     );
 

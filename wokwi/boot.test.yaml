@@ -35,7 +35,11 @@ steps:
   # error screen being drawn are two different moments, and screenshotting
   # between them catches a half-painted frame.
   - wait-serial: 'Updating display for state: Error'
-  - delay: 2000ms
+  # 8s, not 2s: at 2s the error frame was still being painted - the golden
+  # committed with it stops 26 characters into a 34-character line and misses
+  # the third line entirely. That made the frame a race against however long
+  # the render took, which any change to the render path could win or lose.
+  - delay: 8000ms
   - take-screenshot:
       part-id: lcd
       save-to: 'out/error.png'

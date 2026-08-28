@@ -1,21 +1,49 @@
 use std::net::SocketAddr;
 use std::sync::mpsc;
-use std::time::Duration;
 
 use anyhow::{bail, Context};
 use esp_idf_svc::io::EspIOError;
-use esp_idf_svc::tls::X509;
 use esp_idf_svc::ws::client::{
     EspWebSocketClient, EspWebSocketClientConfig, WebSocketEvent, WebSocketEventType,
 };
 use esp_idf_svc::ws::FrameType;
-use heapless::spsc::{Producer, Queue};
 use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 
 use crate::config::env::TOBOGGAN_PRESENTER_TOKEN;
-use crate::config::websocket::{CONNECTION_TIMEOUT, MESSAGE_QUEUE_SIZE, POLL_INTERVAL};
-use crate::{error_diff, AppStateDiff, StateMode};
+use crate::config::websocket::{
+    COMMAND_FRAME_CAPACITY, CONNECTION_TIMEOUT, EVENT_POLL_INTERVAL, POLL_INTERVAL, RECEIVE_BUFFER,
+    TASK_STACK,
+};
+use crate::{bounded, error_diff, AppStateDiff, ErrorMessage, StateMode};
+
+/// The role the server granted this connection.
+///
+/// Deserialized through `String` so that a role this firmware predates maps to
+/// `Other` instead of failing the frame - losing the `client_id` that arrives
+/// alongside it would cost us the ability to unregister cleanly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(from = "String")]
+pub enum Role {
+    /// May move the deck.
+    Presenter,
+    /// Receives every broadcast; any command that would move the deck is
+    /// refused with an `Error` notification.
+    Audience,
+    /// Unrecognized, or absent from the frame.
+    #[default]
+    Other,
+}
+
+impl From<String> for Role {
+    fn from(raw: String) -> Self {
+        match raw.as_str() {
+            "Presenter" => Self::Presenter,
+            "Audience" => Self::Audience,
+            _ => Self::Other,
+        }
+    }
+}
 
 /// The id the server assigned this connection.
 ///
@@ -55,55 +83,31 @@ pub enum Command {
 
 /// Serializes one command and writes it to the socket.
 fn send(client: &mut EspWebSocketClient, command: &Command) -> anyhow::Result<()> {
-    let frame = serde_json::to_string(command).context("serialize command")?;
-    info!("🦋 WS - sending {frame}");
+    // Into a stack buffer rather than a fresh `String` per command: every
+    // variant is `&'static str` or `Copy`, so the frame size is known and
+    // small. `impl Write for &mut [u8]` errors rather than truncating, so an
+    // oversized token fails loudly at registration instead of sending a
+    // half-written frame.
+    let mut buffer = [0_u8; COMMAND_FRAME_CAPACITY];
+    let mut remaining = buffer.as_mut_slice();
+    serde_json::to_writer(&mut remaining, command).context("serialize command")?;
+    let written = COMMAND_FRAME_CAPACITY - remaining.len();
+    let frame = &buffer[..written];
+
+    // Borrowed for valid UTF-8, which serde_json always emits.
+    info!("🦋 WS - sending {}", String::from_utf8_lossy(frame));
     client
-        .send(FrameType::Text(false), frame.as_bytes())
+        .send(FrameType::Text(false), frame)
         .context("send command")?;
     Ok(())
 }
-
-/// The PEM-encoded ISRG Root X1 certificate at the end of the cert chain
-/// for the websocket server at echo.websocket.org.
-const SERVER_ROOT_CERT: &[u8] = b"
------BEGIN CERTIFICATE-----
-MIIFazCCA1OgAwIBAgIRAIIQz7DSQONZRGPgu2OCiwAwDQYJKoZIhvcNAQELBQAw
-TzELMAkGA1UEBhMCVVMxKTAnBgNVBAoTIEludGVybmV0IFNlY3VyaXR5IFJlc2Vh
-cmNoIEdyb3VwMRUwEwYDVQQDEwxJU1JHIFJvb3QgWDEwHhcNMTUwNjA0MTEwNDM4
-WhcNMzUwNjA0MTEwNDM4WjBPMQswCQYDVQQGEwJVUzEpMCcGA1UEChMgSW50ZXJu
-ZXQgU2VjdXJpdHkgUmVzZWFyY2ggR3JvdXAxFTATBgNVBAMTDElTUkcgUm9vdCBY
-MTCCAiIwDQYJKoZIhvcNAQEBBQADggIPADCCAgoCggIBAK3oJHP0FDfzm54rVygc
-h77ct984kIxuPOZXoHj3dcKi/vVqbvYATyjb3miGbESTtrFj/RQSa78f0uoxmyF+
-0TM8ukj13Xnfs7j/EvEhmkvBioZxaUpmZmyPfjxwv60pIgbz5MDmgK7iS4+3mX6U
-A5/TR5d8mUgjU+g4rk8Kb4Mu0UlXjIB0ttov0DiNewNwIRt18jA8+o+u3dpjq+sW
-T8KOEUt+zwvo/7V3LvSye0rgTBIlDHCNAymg4VMk7BPZ7hm/ELNKjD+Jo2FR3qyH
-B5T0Y3HsLuJvW5iB4YlcNHlsdu87kGJ55tukmi8mxdAQ4Q7e2RCOFvu396j3x+UC
-B5iPNgiV5+I3lg02dZ77DnKxHZu8A/lJBdiB3QW0KtZB6awBdpUKD9jf1b0SHzUv
-KBds0pjBqAlkd25HN7rOrFleaJ1/ctaJxQZBKT5ZPt0m9STJEadao0xAH0ahmbWn
-OlFuhjuefXKnEgV4We0+UXgVCwOPjdAvBbI+e0ocS3MFEvzG6uBQE3xDk3SzynTn
-jh8BCNAw1FtxNrQHusEwMFxIt4I7mKZ9YIqioymCzLq9gwQbooMDQaHWBfEbwrbw
-qHyGO0aoSCqI3Haadr8faqU9GY/rOPNk3sgrDQoo//fb4hVC1CLQJ13hef4Y53CI
-rU7m2Ys6xt0nUW7/vGT1M0NPAgMBAAGjQjBAMA4GA1UdDwEB/wQEAwIBBjAPBgNV
-HRMBAf8EBTADAQH/MB0GA1UdDgQWBBR5tFnme7bl5AFzgAiIyBpY9umbbjANBgkq
-hkiG9w0BAQsFAAOCAgEAVR9YqbyyqFDQDLHYGmkgJykIrGF1XIpu+ILlaS/V9lZL
-ubhzEFnTIZd+50xx+7LSYK05qAvqFyFWhfFQDlnrzuBZ6brJFe+GnY+EgPbk6ZGQ
-3BebYhtF8GaV0nxvwuo77x/Py9auJ/GpsMiu/X1+mvoiBOv/2X/qkSsisRcOj/KK
-NFtY2PwByVS5uCbMiogziUwthDyC3+6WVwW6LLv3xLfHTjuCvjHIInNzktHCgKQ5
-ORAzI4JMPJ+GslWYHb4phowim57iaztXOoJwTdwJx4nLCgdNbOhdjsnvzqvHu7Ur
-TkXWStAmzOVyyghqpZXjFaH3pO3JLF+l+/+sKAIuvtd7u+Nxe5AW0wdeRlN8NwdC
-jNPElpzVmbUq4JUagEiuTDkHzsxHpFKVK7q4+63SM1N95R1NbdWhscdCb+ZAJzVc
-oyi3B43njTOQ5yOf+1CceWxG1bQVs5ZufpsMljq4Ui0/1lvh+wjChP4kqKOJ2qxq
-4RgqsahDYVvTH9w7jXbyLeiNdd8XM2w9U/t7y0Ff/9yi0GE44Za4rF2LN9d11TPA
-mRGunUHBcnWEvgJBQl9nJEiU0Zsnvgc/ubhPgXRR4Xq37Z0j4r7g1SgEEzwxA57d
-emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
------END CERTIFICATE-----\0";
 
 #[derive(Debug, Clone)]
 enum WsMessage {
     Connected,
     Registered {
         client_id: ClientId,
-        role: Option<String>,
+        role: Role,
     },
     State {
         current: usize,
@@ -114,7 +118,7 @@ enum WsMessage {
     /// The deck was rebuilt, so the talk data is stale.
     TalkChanged,
     Error {
-        message: String,
+        message: ErrorMessage,
     },
     Closed,
 }
@@ -125,10 +129,10 @@ enum WsMessage {
 enum Message {
     Registered {
         client_id: ClientId,
-        /// Logged, never branched on — so a role the server adds later cannot
-        /// cost us the `client_id` that arrived in the same frame.
+        /// An unfamiliar role deserializes to `Role::Other` rather than
+        /// failing, so it cannot cost us the `client_id` in the same frame.
         #[serde(default)]
-        role: Option<String>,
+        role: Role,
     },
     Blink,
     State {
@@ -171,38 +175,44 @@ pub fn connect_to_ws(
     info!("🦋 WS using URI {uri}");
 
     let config = EspWebSocketClientConfig {
-        server_cert: Some(X509::pem_until_nul(SERVER_ROOT_CERT)),
         reconnect_timeout_ms: CONNECTION_TIMEOUT,
         network_timeout_ms: CONNECTION_TIMEOUT,
+        // Both default to the component's own values - a 4 KB task stack and a
+        // 1 KB receive buffer. `handle_event` runs on that stack and parses
+        // JSON there, and a frame over the buffer size arrives split.
+        task_stack: TASK_STACK,
+        buffer_size: RECEIVE_BUFFER,
         ..Default::default()
     };
 
-    // Use heapless queue for lock-free communication
-    // Leak the queue to make it effectively static for the closure
-    let ws_queue = Box::leak(Box::new(Queue::<WsMessage, MESSAGE_QUEUE_SIZE>::new()));
-    let (mut ws_producer, mut ws_consumer) = ws_queue.split();
+    // The client requires a `'static` closure, so the sending half has to be
+    // owned outright. An `mpsc::Sender` is; a `heapless::spsc::Producer`
+    // borrows its queue, which is why this used to leak one queue per call -
+    // including per *failed* call, from a retry loop that never gives up.
+    let (ws_sender, ws_receiver) = mpsc::channel::<WsMessage>();
 
     info!("🦋 WS connecting...");
 
     let mut client = EspWebSocketClient::new(&uri, &config, CONNECTION_TIMEOUT, move |event| {
-        handle_event(&mut ws_producer, event);
+        handle_event(&ws_sender, event);
     })
     .context("creating WS client")?;
 
-    // Wait for connection - poll the queue
+    // Wait for connection
     let mut connected = false;
     let poll_count = CONNECTION_TIMEOUT.as_millis() / POLL_INTERVAL.as_millis();
     for _ in 0..poll_count {
-        if let Some(first_event) = ws_consumer.dequeue() {
-            match first_event {
-                WsMessage::Connected => {
-                    connected = true;
-                    break;
-                }
-                other => bail!("Expected connected event, got {other:?}"),
+        match ws_receiver.recv_timeout(POLL_INTERVAL) {
+            Ok(WsMessage::Connected) => {
+                connected = true;
+                break;
+            }
+            Ok(other) => bail!("Expected connected event, got {other:?}"),
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                bail!("WebSocket event channel closed before connecting")
             }
         }
-        std::thread::sleep(POLL_INTERVAL);
     }
 
     if !connected {
@@ -245,10 +255,15 @@ pub fn connect_to_ws(
             }
         }
 
-        let Some(msg) = ws_consumer.dequeue() else {
-            // No message available, sleep briefly to avoid busy waiting
-            std::thread::sleep(Duration::from_millis(10));
-            continue;
+        // Bounded wait rather than sleep-then-poll: it wakes the moment a frame
+        // lands, and still returns often enough to keep draining `commands`.
+        let msg = match ws_receiver.recv_timeout(EVENT_POLL_INTERVAL) {
+            Ok(msg) => msg,
+            Err(mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                warn!("🦋 WS - event channel closed");
+                break;
+            }
         };
         info!("🦋 WS incoming {msg:?}");
 
@@ -261,11 +276,10 @@ pub fn connect_to_ws(
                 client_id: id,
                 role,
             } => {
-                let role = role.as_deref().unwrap_or("unknown");
-                info!("🦋 WS - registered as {role} with client_id {id:?}");
-                if role != "Presenter" {
+                info!("🦋 WS - registered as {role:?} with client_id {id:?}");
+                if role != Role::Presenter {
                     warn!(
-                        "🦋 WS - registered as {role}, so taps cannot move the deck. \
+                        "🦋 WS - registered as {role:?}, so taps cannot move the deck. \
                          Set TOBOGGAN_PRESENTER_TOKEN and start the server with \
                          --presenter-token to match."
                     );
@@ -325,10 +339,7 @@ fn send_unregister(client: &mut EspWebSocketClient, client_id: Option<ClientId>)
     }
 }
 
-fn handle_event(
-    producer: &mut Producer<'_, WsMessage>,
-    event: &Result<WebSocketEvent, EspIOError>,
-) {
+fn handle_event(sender: &mpsc::Sender<WsMessage>, event: &Result<WebSocketEvent, EspIOError>) {
     let event = match event {
         Ok(event) => event,
         Err(err) => {
@@ -375,7 +386,12 @@ fn handle_event(
                     info!("📥 WS - ⚡️ blink event received");
                     WsMessage::Blink
                 }
-                Message::Error { message } => WsMessage::Error { message },
+                // Bounded here rather than in `Message`: the wire struct is
+                // transient, and it is the stored copy - cloned on every state
+                // change - that must not carry an unbounded server string.
+                Message::Error { message } => WsMessage::Error {
+                    message: bounded(&message),
+                },
                 Message::State { state } => {
                     let Some(msg) = slide_update(state) else {
                         return;
@@ -387,7 +403,7 @@ fn handle_event(
                     // Queued ahead of the state so the talk is re-fetched even
                     // when the deck has not started and the state below is
                     // dropped.
-                    enqueue(producer, WsMessage::TalkChanged);
+                    enqueue(sender, WsMessage::TalkChanged);
                     let Some(msg) = slide_update(state) else {
                         return;
                     };
@@ -409,7 +425,7 @@ fn handle_event(
         }
     };
 
-    enqueue(producer, msg);
+    enqueue(sender, msg);
 }
 
 /// The slide update an `InnerState` describes, or `None` before the deck has
@@ -437,9 +453,10 @@ fn slide_update(state: InnerState) -> Option<WsMessage> {
     })
 }
 
-/// Hands one message to the main loop. Lock-free; a full queue drops it.
-fn enqueue(producer: &mut Producer<'_, WsMessage>, msg: WsMessage) {
-    if producer.enqueue(msg).is_err() {
-        warn!("WebSocket queue full, dropping message");
+/// Hands one message to `connect_to_ws`. The receiver outlives the client that
+/// owns this sender, so a failure here means the loop has already stopped.
+fn enqueue(sender: &mpsc::Sender<WsMessage>, msg: WsMessage) {
+    if sender.send(msg).is_err() {
+        warn!("WebSocket receiver gone, dropping message");
     }
 }

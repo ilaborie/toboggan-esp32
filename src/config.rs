@@ -56,6 +56,15 @@ pub mod display {
     pub const NEXT_SLIDE_MAX_LINES: usize = 2;
     pub const MAX_CHARS_PER_LINE: usize = 35;
 
+    /// An SSID is capped at 32 bytes by 802.11, so it fits one line - the
+    /// second is only there for a multi-byte name that renders wider.
+    pub const SSID_MAX_LINES: usize = 2;
+
+    /// Error text occupies the same four lines as a slide title would.
+    /// `ERROR_MESSAGE_CAPACITY` is derived from this, so the panel renders
+    /// exactly as much as the state can hold - no more, no less.
+    pub const ERROR_MAX_LINES: usize = 4;
+
     /// Progress bar constants
     pub const PROGRESS_BAR_LINE: i32 = 1;
     pub const PROGRESS_BAR_HEIGHT: u32 = 8;
@@ -120,18 +129,28 @@ pub mod timing {
     pub const MAIN_LOOP_POLL_INTERVAL: Duration = Duration::from_millis(100);
 }
 
-/// Application Constants
-pub mod app {
-    /// Default text values
-    pub const ERROR_PREFIX: &str = "Error! ";
-    pub const BOOTING_TEXT: &str = "Booting...";
+/// Bounds on the text the app stores
+pub mod text {
+    use super::display::{ERROR_MAX_LINES, MAX_CHARS_PER_LINE};
+
+    /// Roughly one screenful. The panel renders at most
+    /// `MAX_CHARS_PER_LINE * ERROR_MAX_LINES` characters, so a longer message
+    /// was always going to be cut - this just cuts it before it is stored and
+    /// cloned around.
+    pub const ERROR_MESSAGE_CAPACITY: usize = MAX_CHARS_PER_LINE * ERROR_MAX_LINES;
+
+    /// 802.11 caps an SSID at 32 bytes, so this bound can never truncate one.
+    pub const SSID_CAPACITY: usize = 32;
 }
 
-/// Network Configuration
-pub mod network {
-    pub const CONNECTING_TEXT_PREFIX: &str = "Connecting to Wifi ";
-    pub const CONNECTING_TEXT_SUFFIX: &str = "...";
-    pub const LOADING_TALK_TEXT: &str = "Loading talk...";
+/// HTTP API Configuration
+pub mod api {
+    /// Hard ceiling on a `/api/talk` body.
+    ///
+    /// Generous for a real deck (a 150-slide talk with long titles is well
+    /// under 20 KB) and small enough that a wrong host or a server bug cannot
+    /// walk the heap down 256 bytes at a time.
+    pub const MAX_TALK_BODY: usize = 32 * 1024;
 }
 
 /// Threading Configuration
@@ -148,12 +167,29 @@ pub mod threading {
 pub mod websocket {
     use std::time::Duration;
 
-    /// Message queue capacity
-    pub const MESSAGE_QUEUE_SIZE: usize = 16;
-
     /// Connection timeout settings
     pub const CONNECTION_TIMEOUT: Duration = Duration::from_secs(10);
     pub const POLL_INTERVAL: Duration = Duration::from_millis(100);
+
+    /// How long the message loop blocks waiting for a server frame before it
+    /// loops round to drain queued taps. Bounds tap latency, so it stays short.
+    pub const EVENT_POLL_INTERVAL: Duration = Duration::from_millis(10);
+
+    /// Stack room for one serialized outgoing command.
+    ///
+    /// The longest is `Register`, at ~45 bytes plus the presenter token; the
+    /// rest are under 60. Generous enough that no plausible token overflows it,
+    /// and serialization errors rather than truncates if one does.
+    pub const COMMAND_FRAME_CAPACITY: usize = 512;
+
+    /// Stack for the `esp_websocket_client` task, which is where the receive
+    /// callback - and so the JSON parse - actually runs. The component's own
+    /// default is 4 KB, which is tight for serde's recursive descent.
+    pub const TASK_STACK: usize = 8 * 1024;
+
+    /// Receive buffer for the same task. The component defaults to 1 KB, which
+    /// splits any larger frame across several callbacks.
+    pub const RECEIVE_BUFFER: usize = 4 * 1024;
 }
 
 /// Reconnection Configuration

@@ -56,6 +56,9 @@ pub use self::display_manager::*;
 mod services;
 pub use self::services::{ServiceState, ServiceTracker, TalkFetch};
 
+mod heap;
+pub use self::heap::*;
+
 mod boot_image;
 mod config;
 
@@ -99,7 +102,7 @@ fn take_talk_data(receiver: &mpsc::Receiver<TalkData>, talk_data: &mut Option<Ta
         return false;
     };
 
-    info!("📚 Talk data received: {}", new_talk_data.title);
+    info!("📚 Talk data received: {}", new_talk_data.title());
     *talk_data = Some(new_talk_data);
     true
 }
@@ -205,11 +208,14 @@ pub fn run(peripherals: Peripherals, sysloop: EspSystemEventLoop) -> anyhow::Res
     spawn_wifi_thread(diff_sender.clone(), modem, sysloop)?;
 
     state_manager.transition_to(AppState::Connecting {
-        ssid: WIFI_SSID.to_string(),
+        ssid: bounded(WIFI_SSID),
     });
 
     let mut services = ServiceTracker::default();
     let mut failure_tracker = FailureTracker::new(5);
+
+    // Baseline before the talk loads, so the first sample is pre-allocation.
+    let mut heap_probe = HeapProbe::new();
 
     // Main loop: handle differential updates and transient effects
     loop {
@@ -333,6 +339,8 @@ pub fn run(peripherals: Peripherals, sysloop: EspSystemEventLoop) -> anyhow::Res
                 if let Err(error) = led_controller.update(state_manager.current_state()) {
                     log::error!("Failed to update LEDs: {error:?}");
                 }
+
+                heap_probe.tick();
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => {
                 log::error!("State diff channel disconnected");

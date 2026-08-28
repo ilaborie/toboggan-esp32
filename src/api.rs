@@ -2,10 +2,12 @@ use std::time::Duration;
 
 use anyhow::{bail, Context};
 use embedded_svc::http::client::Client;
+use embedded_svc::http::Headers;
 use esp_idf_svc::http::client::{Configuration, EspHttpConnection};
 use log::{debug, info};
 use serde::Deserialize;
 
+use crate::config::api::MAX_TALK_BODY;
 use crate::state::TalkData;
 
 #[derive(Debug, Clone, Deserialize)]
@@ -65,7 +67,15 @@ impl Api {
         let status = response.status();
         info!("Status: [{status}]",);
 
-        let mut result = vec![];
+        // Sizing from Content-Length turns the repeated doubling-and-copying of
+        // an empty Vec into a single allocation. Clamped, because the header is
+        // the server's claim and nothing has verified it yet.
+        let expected = response
+            .content_len()
+            .and_then(|len| usize::try_from(len).ok())
+            .unwrap_or(0)
+            .min(MAX_TALK_BODY);
+        let mut result = Vec::with_capacity(expected);
         let mut buf = [0_u8; 256];
         loop {
             // A read error used to end this loop silently, so a truncated body
@@ -77,27 +87,36 @@ impl Api {
                 break;
             }
             result.extend(buf.get(0..size).unwrap_or(&[]));
+            // A wrong host or a server bug must not be able to exhaust the heap
+            // one 256-byte chunk at a time.
+            if result.len() > MAX_TALK_BODY {
+                bail!("the {uri} body exceeds the {MAX_TALK_BODY} byte limit");
+            }
         }
         debug!("total len: {}", result.len());
 
-        let body = String::from_utf8_lossy(&result);
-        debug!("JSON response: {body}");
-
         if !(200..300).contains(&status) {
-            bail!("HTTP {status}: {}", snippet(&body));
+            bail!("HTTP {status}: {}", snippet(&result));
         }
 
-        let talk = serde_json::from_str::<Talk>(&body)
-            .with_context(|| format!("parse the talk from {}", snippet(&body)))?;
+        // From the bytes directly: serde_json validates UTF-8 itself, so the
+        // intermediate `String::from_utf8_lossy` was a second full copy of the
+        // body whenever it was not valid - and silent corruption when it was.
+        let talk = serde_json::from_slice::<Talk>(&result)
+            .with_context(|| format!("parse the talk from {}", snippet(&result)))?;
 
         Ok(talk.into())
     }
 }
 
 /// Trims a response body down to something a 320x240 screen can carry.
-fn snippet(body: &str) -> String {
+///
+/// Takes bytes because the only caller now holds the raw body: this runs on
+/// error paths, so the lossy conversion is affordable exactly here.
+fn snippet(body: &[u8]) -> String {
     const MAX: usize = 80;
 
+    let body = String::from_utf8_lossy(body);
     let trimmed = body.trim();
     if trimmed.is_empty() {
         return "<empty body>".to_string();

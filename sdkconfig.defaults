@@ -27,3 +27,17 @@ CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="../../../../../../partitions.csv"
 CONFIG_HTTPD_WS_SUPPORT=y
 CONFIG_COMP_TCP_TRANSPORT_ENABLED=y
 CONFIG_COMP_ESP_TLS_ENABLED=y
+
+# PSRAM
+# The module is an ESP32-S3-WROOM-1 N16R8: 8 MB of octal PSRAM that was sitting
+# idle while every allocation competed for the ~400 KB of internal SRAM, of
+# which 108 KB is already committed to task stacks. The PSRAM pins (GPIO 33-37)
+# are internal to the module, so there is no clash with the display (7/6/5/4/48),
+# the touch bus (8/18) or the LEDs (39/40/41).
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+CONFIG_SPIRAM_USE_MALLOC=y
+# PSRAM is not DMA-capable here and is slower on a cache miss, so keep small
+# allocations - which is most driver bookkeeping - in internal RAM.
+CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=4096

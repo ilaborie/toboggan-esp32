@@ -13,6 +13,10 @@ harness = false # do not use the built-in cargo test harness -> resolve rust-ana
 
 [profile.release]
 opt-level = "s"
+# Whole-program optimization across crate boundaries. Costs build time and
+# nothing else; on firmware it is the single largest lever on image size.
+lto = "fat"
+codegen-units = 1
 
 [profile.dev]
 debug = true    # Symbols are nice, and they don't increase the size on Flash
@@ -36,7 +40,7 @@ embedded-svc = "0.29"
 embedded-graphics = "0.8.2"
 tinybmp = "0.7"
 mipidsi = { version = "0.10", default-features = false }
-heapless = "0.9"
+heapless = { version = "0.9", features = ["serde"] }
 
 # GT911 touchscreen. Its `get_touch` returns a plain Option, so none of its
 # heapless 0.8 surface is reachable from here.
