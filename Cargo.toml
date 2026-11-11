@@ -29,7 +29,7 @@ experimental = ["esp-idf-svc/experimental"]
 
 [dependencies]
 log = "0.4"
-esp-idf-svc = { version = "0.52", features = [
+esp-idf-svc = { version = "0.53", features = [
     "alloc",
     "experimental",
 ] }
@@ -69,4 +69,4 @@ remote_component = { name = "espressif/esp_websocket_client", version = "1.1.0" 
 # critical-section = { version = "1.1", features = ["std"], default-features = false }
 
 [build-dependencies]
-embuild = "0.33.3"
+embuild = "0.33.7"

@@ -9,7 +9,8 @@ ESP32-S3-BOX-3B embedded application that connects to a presentation server ([To
 **Target Device**: [ESP32-S3-BOX-3B](https://github.com/espressif/esp-box/blob/master/docs/hardware_overview/esp32_s3_box_3/hardware_overview_for_3.md)
 - MCU: ESP32-S3 (Xtensa dual-core)
 - Display: MIPIDSI 240x320 SPI
-- RGB LED: GPIO 39 (red), 40 (green), 41 (blue)
+- RGB LED: GPIO 39 (red), 40 (green), 41 (blue) - an external common-cathode
+  module on the dock's PMOD1 header; the box itself has no RGB LED
 - WiFi: Built-in 802.11b/g/n
 
 ## Quick Start
