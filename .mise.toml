@@ -74,7 +74,15 @@ description = "Build the firmware for the Wokwi simulator"
 # needs its own values: Wokwi's virtual network is the open `Wokwi-GUEST` AP,
 # and `host.wokwi.internal` is how the simulated board reaches this machine.
 env = { WIFI_SSID = "Wokwi-GUEST", WIFI_PASSWORD = "", TOBOGGAN_HOST = "host.wokwi.internal", TOBOGGAN_PORT = "8080" }
-run = "cargo build --release"
+# Not plain `cargo`: when it resolves to the mise shim, the shim reloads
+# `.mise.local.toml` over this `env`, and the device WiFi values get baked in.
+# The rustup proxy reads the environment as given. The `strings` check fails
+# the task rather than letting the simulator boot on the wrong network.
+run = """
+"${CARGO_HOME:-$HOME/.cargo}/bin/cargo" build --release
+strings -a target/xtensa-esp32s3-espidf/release/toboggan-esp32 | grep -q Wokwi-GUEST \
+  || { echo "sim-build: Wokwi-GUEST is not in the binary" >&2; exit 1; }
+"""
 
 [tasks.sim-gateway]
 description = "Run the Wokwi private gateway (makes host.wokwi.internal resolve)"
